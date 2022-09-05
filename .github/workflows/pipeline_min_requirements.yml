@@ -1,0 +1,51 @@
+# This Pipeline tests the minimum requirements by running instructions from the docs
+# As it uses the installer created by the release pipeline it only runs after the
+# release pipeline finished
+name: E2E min requirements
+
+on:
+#  workflow_run:
+#    workflows: ["Release Pipeline"]
+#    types:
+#      - completed
+#    branches: [main]
+#  workflow_dispatch:
+  push:
+    branches:
+      - '*'         # matches every branch that doesn't contain a '/'
+      - '*/*'       # matches every branch containing a single '/'
+      - '**'        # matches every branch
+
+jobs:
+  min_requirements_linux:
+    name: check minimun requirements on Ubuntu-20.04
+    runs-on: ubuntu-22.04
+    container:
+      image: "ubuntu:20.04"
+      options: --privileged
+    steps:
+      - name: Install dependencies
+        run: |
+          apt update
+          apt install -y cmake llvm-11 clang-11 subversion curl
+          ln -s /usr/bin/clang-11 /usr/bin/clang
+          ln -s /usr/bin/clang++-11 /usr/bin/clang++
+          ln -s /usr/bin/llvm-symbolizer-11 /usr/bin/llvm-symbolizer
+          cmake --version | grep 3.16
+        shell: bash
+
+      - name: Download & execute latest installer
+        run: sh -c "$(curl -fsSL https://raw.githubusercontent.com/CodeIntelligenceTesting/cifuzz/main/install.sh)"
+
+      - name: Download Example Projects
+        run: svn export https://github.com/CodeIntelligenceTesting/cifuzz.git/trunk/examples
+        shell: bash
+
+      - name: Run CMake Example
+        run: |
+          cd examples/cmake
+          ~/cifuzz/bin/cifuzz run my_fuzz_test 2>&1 | tee fuzzing.log
+          cat fuzzing.log | grep "heap buffer overflow"
+          cat fuzzing.log | grep "undefined behaviour"
+          cat fuzzing.log | grep -E "Findings:\s+2"
+        shell: bash
