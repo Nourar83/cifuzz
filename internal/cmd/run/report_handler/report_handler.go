@@ -17,11 +17,11 @@ import (
 	"golang.org/x/term"
 
 	"code-intelligence.com/cifuzz/internal/cmd/run/report_handler/metrics"
-	"code-intelligence.com/cifuzz/internal/cmd/run/report_handler/stacktrace"
 	"code-intelligence.com/cifuzz/internal/names"
 	"code-intelligence.com/cifuzz/pkg/desktop"
 	"code-intelligence.com/cifuzz/pkg/finding"
 	"code-intelligence.com/cifuzz/pkg/log"
+	"code-intelligence.com/cifuzz/pkg/parser/libfuzzer/stacktrace"
 	"code-intelligence.com/cifuzz/pkg/report"
 	"code-intelligence.com/cifuzz/util/fileutil"
 	"code-intelligence.com/cifuzz/util/stringutil"

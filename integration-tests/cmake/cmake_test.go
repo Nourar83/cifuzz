@@ -26,9 +26,9 @@ import (
 	"gopkg.in/yaml.v3"
 
 	builderPkg "code-intelligence.com/cifuzz/internal/builder"
-	"code-intelligence.com/cifuzz/internal/cmd/run/report_handler/stacktrace"
 	"code-intelligence.com/cifuzz/internal/testutil"
 	"code-intelligence.com/cifuzz/pkg/artifact"
+	"code-intelligence.com/cifuzz/pkg/parser/libfuzzer/stacktrace"
 	"code-intelligence.com/cifuzz/util/envutil"
 	"code-intelligence.com/cifuzz/util/executil"
 	"code-intelligence.com/cifuzz/util/fileutil"

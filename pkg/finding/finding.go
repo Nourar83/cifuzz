@@ -13,8 +13,8 @@ import (
 	"github.com/otiai10/copy"
 	"github.com/pkg/errors"
 
-	"code-intelligence.com/cifuzz/internal/cmd/run/report_handler/stacktrace"
 	"code-intelligence.com/cifuzz/pkg/log"
+	"code-intelligence.com/cifuzz/pkg/parser/libfuzzer/stacktrace"
 	"code-intelligence.com/cifuzz/util/fileutil"
 )
 
