@@ -43,6 +43,7 @@ type RunnerOptions struct {
 	SeedCorpusDirs     []string
 	Dictionary         string
 	LibraryDirs        []string
+	ProjectDir         string
 	ReadOnlyBindings   []string
 	EnvVars            []string
 	EngineArgs         []string
@@ -265,6 +266,7 @@ func (r *Runner) RunLibfuzzerAndReport(ctx context.Context, args []string, env [
 		SupportJazzer:       r.SupportJazzer,
 		KeepColor:           r.KeepColor,
 		StartupOutputWriter: startupOutputWriter,
+		ProjectDir:          r.ProjectDir,
 	})
 	reportsCh := make(chan *report.Report, MaxBufferedReports)
 

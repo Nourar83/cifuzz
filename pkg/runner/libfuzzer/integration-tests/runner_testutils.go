@@ -48,6 +48,7 @@ type RunnerTest struct {
 	DisableMinijail    bool
 	RunsLimit          int
 	LogOutput          *bytes.Buffer
+	ProjectDir         string
 }
 
 func NewLibfuzzerTest(t *testing.T, buildDir, fuzzTarget string, disableMinijail bool) *RunnerTest {
@@ -61,8 +62,9 @@ func NewLibfuzzerTest(t *testing.T, buildDir, fuzzTarget string, disableMinijail
 		DisableMinijail: disableMinijail,
 		// For those tests which don't set a custom runs limit, the
 		// expected errors are found within 3000 runs.
-		RunsLimit: 3000,
-		LogOutput: bytes.NewBuffer([]byte{}),
+		RunsLimit:  3000,
+		LogOutput:  bytes.NewBuffer([]byte{}),
+		ProjectDir: buildDir,
 	}
 }
 
@@ -87,6 +89,7 @@ func (test *RunnerTest) Start(t *testing.T, reportCh chan *report.Report) error 
 		FuzzTarget:         test.FuzzTarget,
 		GeneratedCorpusDir: test.GeneratedCorpusDir,
 		SeedCorpusDirs:     []string{seedCorpusDir},
+		ProjectDir:         test.ProjectDir,
 		Timeout:            test.Timeout,
 		EngineArgs:         test.EngineArgs,
 		FuzzTestArgs:       test.FuzzTestArgs,

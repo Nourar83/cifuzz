@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"code-intelligence.com/cifuzz/pkg/finding"
+	"code-intelligence.com/cifuzz/pkg/parser/libfuzzer/stacktrace"
 	"code-intelligence.com/cifuzz/pkg/report"
 	"code-intelligence.com/cifuzz/util/fileutil"
 )
@@ -130,7 +131,7 @@ error info 2`,
 			},
 		},
 		{
-			name: "UBSAN recoverable",
+			name: "UBSAN_recoverable",
 			logs: `
 INFO: Seed: 2610909839
 INFO: Loaded 1 modules   (3 inline 8-bit counters): 3 [0x629040, 0x629043),
@@ -177,6 +178,13 @@ SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior fuzz_targets/manual.cpp:
 						Logs: []string{
 							"fuzz_targets/manual.cpp:6:5: runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type 'int'",
 							"SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior fuzz_targets/manual.cpp:6:5 in",
+						},
+						StackTrace: []*stacktrace.StackFrame{
+							{
+								SourceFile: "fuzz_targets/manual.cpp",
+								Line:       6,
+								Column:     5,
+							},
 						},
 					},
 				},

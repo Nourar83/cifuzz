@@ -312,6 +312,7 @@ func (c *runCmd) runFuzzTest(buildResult *build.Result) error {
 		FuzzTarget:         buildResult.Executable,
 		GeneratedCorpusDir: generatedCorpusDir,
 		SeedCorpusDirs:     seedCorpusDirs,
+		ProjectDir:         c.opts.ProjectDir,
 		ReadOnlyBindings:   []string{buildResult.BuildDir},
 		Dictionary:         c.opts.Dictionary,
 		EngineArgs:         c.opts.EngineArgs,

@@ -21,7 +21,6 @@ import (
 	"code-intelligence.com/cifuzz/pkg/desktop"
 	"code-intelligence.com/cifuzz/pkg/finding"
 	"code-intelligence.com/cifuzz/pkg/log"
-	"code-intelligence.com/cifuzz/pkg/parser/libfuzzer/stacktrace"
 	"code-intelligence.com/cifuzz/pkg/report"
 	"code-intelligence.com/cifuzz/util/fileutil"
 	"code-intelligence.com/cifuzz/util/stringutil"
@@ -155,12 +154,6 @@ func (h *ReportHandler) handleFinding(f *finding.Finding, print bool) error {
 	var err error
 
 	f.CreatedAt = time.Now()
-
-	// Parse the stack trace
-	f.StackTrace, err = stacktrace.NewParser(h.ProjectDir).Parse(f.Logs)
-	if err != nil {
-		return err
-	}
 
 	// Generate a name for the finding. The name is chosen deterministically,
 	// based on:

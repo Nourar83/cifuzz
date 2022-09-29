@@ -16,6 +16,7 @@ import (
 
 	"code-intelligence.com/cifuzz/pkg/finding"
 	"code-intelligence.com/cifuzz/pkg/minijail"
+	"code-intelligence.com/cifuzz/pkg/parser/libfuzzer/stacktrace"
 	"code-intelligence.com/cifuzz/pkg/parser/sanitizer"
 	"code-intelligence.com/cifuzz/pkg/report"
 	"code-intelligence.com/cifuzz/util/regexutil"
@@ -88,6 +89,8 @@ type Options struct {
 	// The parser writes all parsed lines to StartupOutputWriter up to
 	// the point where the fuzzer has completed initialization.
 	StartupOutputWriter io.Writer
+	// The directory to which paths in the stack trace are made relative to
+	ProjectDir string
 }
 
 func NewLibfuzzerOutputParser(options *Options) *parser {
@@ -111,7 +114,7 @@ func (p *parser) Parse(ctx context.Context, input io.Reader, reportsCh chan *rep
 
 	// The fuzzer output was closed, which means that the fuzzer exited.
 	// If there is still a pending finding, send it now.
-	err := p.sendPendingFindingIfAny(ctx)
+	err := p.finalizeAndSendPendingFindingIfAny(ctx)
 	if err != nil {
 		return err
 	}
@@ -200,7 +203,7 @@ func (p *parser) parseLine(ctx context.Context, line string) error {
 			// lines are printed is long enough that it should be safe
 			// to assume that the error report was printed out completely
 			// by now. We therefore send the pending finding now.
-			err = p.sendPendingFinding(ctx)
+			err = p.finalizeAndSendPendingFinding(ctx)
 			if err != nil {
 				return err
 			}
@@ -214,7 +217,7 @@ func (p *parser) parseLine(ctx context.Context, line string) error {
 		// If there is still a pending finding, send it now, because
 		// we'll treat all further output lines as belonging to the new
 		// finding.
-		err := p.sendPendingFindingIfAny(ctx)
+		err := p.finalizeAndSendPendingFindingIfAny(ctx)
 		if err != nil {
 			return err
 		}
@@ -535,15 +538,23 @@ func parseAsEmptyCorpusMessage(line string) bool {
 	return matches != nil
 }
 
-func (p *parser) sendPendingFindingIfAny(ctx context.Context) error {
+func (p *parser) finalizeAndSendPendingFindingIfAny(ctx context.Context) error {
 	if p.pendingFinding == nil {
 		return nil
 	}
-	return p.sendPendingFinding(ctx)
+	return p.finalizeAndSendPendingFinding(ctx)
 }
 
-func (p *parser) sendPendingFinding(ctx context.Context) error {
-	err := p.sendFinding(ctx, p.pendingFinding)
+func (p *parser) finalizeAndSendPendingFinding(ctx context.Context) error {
+	var err error
+
+	// Parse the stack trace
+	p.pendingFinding.StackTrace, err = stacktrace.NewParser(p.ProjectDir).Parse(p.pendingFinding.Logs)
+	if err != nil {
+		return err
+	}
+
+	err = p.sendFinding(ctx, p.pendingFinding)
 	if err != nil {
 		return err
 	}
