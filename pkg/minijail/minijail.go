@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -324,11 +325,21 @@ func NewMinijail(opts *Options) (*minijail, error) {
 		bindings = append(bindings, binding)
 	}
 
+	// Fill missing target fields
+	for i := range bindings {
+		if bindings[i].Target == "" {
+			bindings[i].Target = bindings[i].Source
+		}
+	}
+
+	// Sort bindings alphabetically
+	// TODO: Explain why
+	sort.Slice(bindings, func(i, j int) bool {
+		return bindings[i].Target < bindings[j].Target
+	})
+
 	// Create the bindings
 	for _, binding := range bindings {
-		if binding.Target == "" {
-			binding.Target = binding.Source
-		}
 		// Skip if the source doesn't exist
 		exists, err := fileutil.Exists(binding.Source)
 		if err != nil {
