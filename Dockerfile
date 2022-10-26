@@ -6,15 +6,14 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
     bash-completion \
     binutils \
     build-essential \
-    clang-12 \
     cmake \
     curl \
     file \
     git \
     gpg \
+    gpg-agent \
     jq \
     libcap-dev \
-    llvm-12 \
     openjdk-11-jdk \
     python-is-python3 \
     python3 \
@@ -24,10 +23,16 @@ RUN export DEBIAN_FRONTEND=noninteractive && \
 RUN curl --fail --silent --show-error --location -o go.tar.gz https://go.dev/dl/go1.19.2.linux-amd64.tar.gz && \
     tar -C /usr/local -xzf go.tar.gz
 
+RUN echo "deb http://apt.llvm.org/focal/ llvm-toolchain-focal-14 main" > /etc/apt/sources.list.d/llvm.list && \
+    wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    clang-14 llvm-14
+
 ENV PATH="${PATH}:/usr/local/go/bin"
-ENV PATH="${PATH}:/usr/lib/llvm-12/bin"
-ENV CC=/usr/lib/llvm-12/bin/clang
-ENV CXX=/usr/lib/llvm-12/bin/clang++
+ENV PATH="${PATH}:/usr/lib/llvm-14/bin"
+ENV CC=/usr/lib/llvm-14/bin/clang
+ENV CXX=/usr/lib/llvm-14/bin/clang++
 
 RUN groupadd user && useradd --no-log-init -m -s /bin/bash -g user user
 USER user
