@@ -5,71 +5,10 @@ name: E2E Source Installation/Example Test
 
 on:
   push:
-    branches: [main]
+    branches: [main, debug-e2e]
   workflow_dispatch:
 
 jobs:
-  # we are running the linux part in container as it is a more realistic starting
-  # point than the preinstalled github VMs
-  from_source_linux:
-    name: ${{ matrix.container}} - install from source 
-    runs-on: ubuntu-22.04
-    container: 
-      image: ${{ matrix.container}}
-      options: --privileged
-    strategy:
-      matrix:
-        container: ["ubuntu:22.04", "archlinux:latest"]
-    steps:
-      - name: Install dependencies with pacman
-        if: contains(matrix.container, 'archlinux')
-        # please make sure this is in sync with the README.md / installation docs
-        # glibc was added as it is required by nodejs which is used to run
-        # the github action "action/checkout"
-        run: pacman -Sy --noconfirm git make cmake clang llvm go
-
-      - name: Build libcap statically 
-        if: contains(matrix.container, 'archlinux')
-        run: |
-          pacman -Sy --noconfirm glibc pam linux-api-headers make diffutils
-          mkdir /libcap
-          cd /libcap
-          curl --output libcap.tar.gz --fail --location https://git.kernel.org/pub/scm/libs/libcap/libcap.git/snapshot/libcap-2.65.tar.gz
-          echo "b0c770a99f978ca32ce58fb72b23d2a883b160aa30ee909fb83ba4003efc771c  libcap.tar.gz" > libcap.sha
-          sha256sum -c libcap.sha
-          tar -zxvf libcap.tar.gz
-          cd libcap-2.65
-          make
-          make install
-
-      - name: Install dependencies with apt 
-        if: contains(matrix.container, 'ubuntu')
-        # please make sure this is in sync with the README.md / installation docs
-        run: |
-          apt update
-          apt --yes install git make cmake clang llvm golang-go libcap-dev 
-
-      - uses: actions/checkout@v3
-
-      - name: Install cifuzz
-        run: make install
-
-      - name: Run CMake Example
-        run: |
-          cd examples/cmake
-          ~/cifuzz/bin/cifuzz run -v my_fuzz_test 2>&1 | tee fuzzing.log
-          cat fuzzing.log | grep "heap buffer overflow"
-          cat fuzzing.log | grep "undefined behaviour"
-          cat fuzzing.log | grep -E "Findings:\s+2"
-
-      - name: Run Other Build System Example
-        run: |
-          cd examples/other
-          ~/cifuzz/bin/cifuzz run -v my_fuzz_test 2>&1 | tee fuzzing.log
-          cat fuzzing.log | grep "heap buffer overflow"
-          cat fuzzing.log | grep "undefined behaviour"
-          cat fuzzing.log | grep -E "Findings:\s+2"
-
   # In general it would be nice to use windows container for testing this,
   # but by now they are not available for windows based github runner
   from_source_mac-windows:
