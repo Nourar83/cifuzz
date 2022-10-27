@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	"github.com/spf13/viper"
 
 	"code-intelligence.com/cifuzz/internal/build"
 	"code-intelligence.com/cifuzz/internal/cmdutils"
@@ -116,6 +117,9 @@ func (b *Builder) Configure() error {
 		"-DCIFUZZ_ENGINE=" + b.Engine,
 		"-DCIFUZZ_SANITIZERS=" + strings.Join(b.Sanitizers, ";"),
 		"-DCIFUZZ_TESTING:BOOL=ON",
+	}
+	if viper.GetBool("verbose") {
+		cacheArgs = append(cacheArgs, "-DCMAKE_VERBOSE_MAKEFILE:BOOL=ON")
 	}
 	if runtime.GOOS != "windows" {
 		// Use relative paths in RPATH/RUNPATH so that binaries from the
