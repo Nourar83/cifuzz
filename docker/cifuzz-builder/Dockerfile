@@ -32,11 +32,11 @@ ENV CXX=/usr/lib/llvm-12/bin/clang++
 RUN groupadd user && useradd --no-log-init -m -s /bin/bash -g user user
 USER user
 
-COPY --chown=user:user . /home/user/cifuzz-git
-WORKDIR /home/user/cifuzz-git
-
-ENV SHELL=/bin/bash
-RUN go run tools/builder/builder.go --version dev --verbose && \
-    go build -tags installer -o cifuzz-installer cmd/installer/installer.go && \
-    ./cifuzz-installer --verbose
-ENV PATH="${PATH}:/home/user/cifuzz/bin"
+#COPY --chown=user:user . /home/user/cifuzz-git
+#WORKDIR /home/user/cifuzz-git
+#
+#ENV SHELL=/bin/bash
+#RUN go run tools/builder/builder.go --version dev --verbose && \
+#    go build -tags installer -o cifuzz-installer cmd/installer/installer.go && \
+#    ./cifuzz-installer --verbose
+#ENV PATH="${PATH}:/home/user/cifuzz/bin"

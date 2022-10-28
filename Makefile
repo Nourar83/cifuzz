@@ -17,7 +17,7 @@ endif
 
 bin_dir = build/bin
 binary_base_path = $(bin_dir)/cifuzz
-installer_base_path = $(bin_dir)/cifuzz_installer
+installer_base_path = $(bin_dir)/cifuzz-installer
 
 project := "code-intelligence.com/cifuzz"
 
@@ -172,3 +172,11 @@ site/update:
 	git -C site add -A
 	git -C site commit -m "update docs" || true
 	git -C site push
+
+.PHONY: docker/cifuzz-builder
+docker/cifuzz-builder:
+	docker build -t cifuzz-builder -f docker/cifuzz-builder/Dockerfile .
+
+.PHONY: installer-via-docker
+installer-via-docker: docker/cifuzz-builder
+	docker run -v "${PWD}:/src" -v "${PWD}/build:/src/build:rw" cifuzz-builder make -C /src installer
