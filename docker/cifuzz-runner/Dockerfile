@@ -26,22 +26,31 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     vim \
     wget
 
-ENV PATH="${PATH}:/usr/lib/llvm-12/bin"
 ENV CC=/usr/lib/llvm-12/bin/clang
 ENV CXX=/usr/lib/llvm-12/bin/clang++
 
-# Install Go
-RUN --mount=type=cache,target=/var/cache/go-src \
-    SHA256=$(sha256sum /var/cache/go-src/go.tar.gz | cut -d ' ' -f 1); \
-    if ! [ "${SHA256:-}" == "5e8c5a74fe6470dd7e055a461acda8bb4050ead8c2df70f227e3ff7d8eb7eeb6" ]; then \
-      curl --fail --silent --show-error --location -o /var/cache/go-src/go.tar.gz https://go.dev/dl/go1.19.2.linux-amd64.tar.gz \
-    fi && \
-    tar -C /usr/local -xzf /var/cache/go-src/go.tar.gz
-
-ENV PATH="${PATH}:/usr/local/go/bin"
+## Install Go
+#RUN --mount=type=cache,target=/var/cache/go-src \
+#    SHA256=$(sha256sum /var/cache/go-src/go.tar.gz | cut -d ' ' -f 1); \
+#    if ! [ "${SHA256:-}" == "5e8c5a74fe6470dd7e055a461acda8bb4050ead8c2df70f227e3ff7d8eb7eeb6" ]; then \
+#      curl --fail --silent --show-error --location -o /var/cache/go-src/go.tar.gz https://go.dev/dl/go1.19.2.linux-amd64.tar.gz \
+#    fi && \
+#    tar -C /usr/local -xzf /var/cache/go-src/go.tar.gz
+#
+#ENV PATH="${PATH}:/usr/local/go/bin"
+#ENV PATH="${PATH}:/usr/lib/llvm-12/bin"
 
 RUN groupadd user && useradd --no-log-init -m -s /bin/bash -g user user
 USER user
+
+# Install cifuzz
+COPY --chown=user:user build/bin/cifuzz_installer_linux /home/user/
+ENV SHELL=/bin/bash
+RUN --mount=type=cache,target=/home/user/.cache/go-build \
+    --mount=type=cache,target=/home/user/go/pkg/mod \
+    --mount=type=tmpfs,target=/home/user/go/src/ \
+    /home/user/cifuzz_installer_linux --verbose --bash-completion --zsh-completion --fish-completion
+ENV PATH="${PATH}:/home/user/cifuzz/bin"
 
 #COPY --chown=user:user . /home/user/cifuzz-git
 #WORKDIR /home/user/cifuzz-git

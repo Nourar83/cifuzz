@@ -27,10 +27,17 @@ var buildFiles embed.FS
 
 var notes []string
 
+var installBashCompletion bool
+var installZshCompletion bool
+var installFishCompletion bool
+
 func main() {
 	flags := pflag.NewFlagSet("cifuzz installer", pflag.ExitOnError)
 	helpRequested := flags.BoolP("help", "h", false, "")
 	flags.Bool("verbose", false, "Print verbose output")
+	flags.BoolVar(&installBashCompletion, "bash-completion", false, "Install the bash completion script even if SHELL is not bash")
+	flags.BoolVar(&installZshCompletion, "zsh-completion", false, "Install the zsh completion script even if SHELL is not zsh")
+	flags.BoolVar(&installFishCompletion, "fish-completion", false, "Install the fish completion script even if SHELL is not fish")
 	ignoreCheck := flags.Bool("ignore-installation-check", false, "Doesn't check if a previous installation already exists")
 	cmdutils.ViperMustBindPFlag("verbose", flags.Lookup("verbose"))
 
@@ -197,18 +204,30 @@ func ExtractEmbeddedFiles(files *embed.FS) error {
 	// shell is supported)
 	cifuzzPath := filepath.Join(binDir, "cifuzz")
 	shell := filepath.Base(os.Getenv("SHELL"))
-	switch shell {
-	case "bash":
+	var shellCompletionInstalled bool
+	if shell == "bash" || installBashCompletion {
 		err = installBashCompletionScript(installDir, cifuzzPath)
-	case "zsh":
-		err = installZshCompletionScript(installDir, cifuzzPath)
-	case "fish":
-		err = installFishCompletionScript(cifuzzPath)
-	default:
-		log.Printf("Not installing shell completion script: Unsupported shell: %s", shell)
+		if err != nil {
+			return err
+		}
+		shellCompletionInstalled = true
 	}
-	if err != nil {
-		return err
+	if shell == "zsh" || installZshCompletion {
+		err = installZshCompletionScript(installDir, cifuzzPath)
+		if err != nil {
+			return err
+		}
+		shellCompletionInstalled = true
+	}
+	if shell == "fish" || installFishCompletion {
+		err = installFishCompletionScript(cifuzzPath)
+		if err != nil {
+			return err
+		}
+		shellCompletionInstalled = true
+	}
+	if !shellCompletionInstalled {
+		log.Printf("Not installing shell completion script: Unsupported shell: %s", shell)
 	}
 
 	// Support not copying and registering the CMake package.
