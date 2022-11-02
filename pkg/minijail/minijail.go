@@ -159,6 +159,10 @@ var fixedMinijailArgs = []string{
 	"-k", "proc,/proc,proc," + strconv.Itoa(MS_RDONLY),
 	// Mount a tmpfs on /dev/shm to allow using shared memory.
 	"-k", "tmpfs,/dev/shm,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
+	// Mount a tmpfs on /tmp
+	"-k", "tmpfs,/tmp,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
+	// Mount a tmpfs on /run
+	"-k", "tmpfs,/run,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=755",
 	// Added by us, to log to stderr
 	"--logging=stderr",
 }
@@ -218,8 +222,8 @@ func NewMinijail(opts *Options) (*minijail, error) {
 		return nil, err
 	}
 
-	// Create /tmp, /proc directories.
-	for _, dir := range []string{"/proc", "/tmp"} {
+	// Create /tmp, /proc, /var directories.
+	for _, dir := range []string{"/proc", "/tmp", "/var"} {
 		err = os.MkdirAll(filepath.Join(chrootDir, dir), 0o755)
 		if err != nil {
 			return nil, errors.WithStack(err)
@@ -228,6 +232,12 @@ func NewMinijail(opts *Options) (*minijail, error) {
 
 	// Create /dev/shm which is required to allow using shared memory
 	err = os.MkdirAll(filepath.Join(chrootDir, "dev", "shm"), 0o755)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+
+	// Create a symlink /var/run -> /run
+	err = os.Symlink(filepath.Join(chrootDir, "run"), filepath.Join(chrootDir, "var", "run"))
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
