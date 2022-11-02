@@ -1,6 +1,7 @@
-FROM ubuntu:20.04
+FROM ubuntu:20.04 AS build
 
-# Install APT packages with caching
+# Install APT packages with caching set up according to
+# https://docs.docker.com/engine/reference/builder/#example-cache-apt-packages
 RUN rm -f /etc/apt/apt.conf.d/docker-clean && \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -24,7 +25,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     python-is-python3 \
     python3 \
     vim \
-    wget
+    wget \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="${PATH}:/usr/lib/llvm-12/bin"
 ENV CC=/usr/lib/llvm-12/bin/clang
@@ -33,21 +35,18 @@ ENV CXX=/usr/lib/llvm-12/bin/clang++
 # Install Go
 RUN --mount=type=cache,target=/var/cache/go-src \
     SHA256=$(sha256sum /var/cache/go-src/go.tar.gz | cut -d ' ' -f 1); \
-    if ! [ "${SHA256:-}" == "5e8c5a74fe6470dd7e055a461acda8bb4050ead8c2df70f227e3ff7d8eb7eeb6" ]; then \
-      curl --fail --silent --show-error --location -o /var/cache/go-src/go.tar.gz https://go.dev/dl/go1.19.2.linux-amd64.tar.gz \
+    if [ "${SHA256:-}" != "5e8c5a74fe6470dd7e055a461acda8bb4050ead8c2df70f227e3ff7d8eb7eeb6" ]; then \
+      curl --fail --silent --show-error --location -o /var/cache/go-src/go.tar.gz https://go.dev/dl/go1.19.2.linux-amd64.tar.gz; \
     fi && \
     tar -C /usr/local -xzf /var/cache/go-src/go.tar.gz
 
 ENV PATH="${PATH}:/usr/local/go/bin"
 
-RUN groupadd user && useradd --no-log-init -m -s /bin/bash -g user user
-USER user
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/root/go/pkg/mod \
+    make installer
 
-#COPY --chown=user:user . /home/user/cifuzz-git
-#WORKDIR /home/user/cifuzz-git
-#
-#ENV SHELL=/bin/bash
-#RUN go run tools/builder/builder.go --version dev --verbose && \
-#    go build -tags installer -o cifuzz-installer cmd/installer/installer.go && \
-#    ./cifuzz-installer --verbose
-#ENV PATH="${PATH}:/home/user/cifuzz/bin"
+FROM scratch AS bin
+COPY --from=build /src/build/bin/cifuzz_installer_linux /

@@ -1,6 +1,7 @@
 FROM ubuntu:20.04
 
-# Install APT packages with caching
+# Install APT packages with caching set up according to:
+# https://docs.docker.com/engine/reference/builder/#example-cache-apt-packages
 RUN rm -f /etc/apt/apt.conf.d/docker-clean && \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -24,7 +25,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     python-is-python3 \
     python3 \
     vim \
-    wget
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
 
 ENV CC=/usr/lib/llvm-12/bin/clang
 ENV CXX=/usr/lib/llvm-12/bin/clang++
@@ -40,17 +43,19 @@ ENV CXX=/usr/lib/llvm-12/bin/clang++
 #ENV PATH="${PATH}:/usr/local/go/bin"
 #ENV PATH="${PATH}:/usr/lib/llvm-12/bin"
 
-RUN groupadd user && useradd --no-log-init -m -s /bin/bash -g user user
-USER user
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    export DEBIAN_FRONTEND=noninteractive && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    fish zsh
 
 # Install cifuzz
 COPY --chown=user:user build/bin/cifuzz_installer_linux /home/user/
-ENV SHELL=/bin/bash
-RUN --mount=type=cache,target=/home/user/.cache/go-build \
-    --mount=type=cache,target=/home/user/go/pkg/mod \
-    --mount=type=tmpfs,target=/home/user/go/src/ \
-    /home/user/cifuzz_installer_linux --verbose --bash-completion --zsh-completion --fish-completion
-ENV PATH="${PATH}:/home/user/cifuzz/bin"
+RUN /home/user/cifuzz_installer_linux --verbose --bash-completion --zsh-completion --fish-completion
+
+RUN groupadd user && useradd --no-log-init -m -s /usr/bin/zsh -g user user
+USER user
 
 #COPY --chown=user:user . /home/user/cifuzz-git
 #WORKDIR /home/user/cifuzz-git

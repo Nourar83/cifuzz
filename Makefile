@@ -173,14 +173,10 @@ site/update:
 	git -C site commit -m "update docs" || true
 	git -C site push
 
-.PHONY: docker/cifuzz-builder
-docker/cifuzz-builder: clean
-	DOCKER_BUILDKIT=1 docker build -t cifuzz-builder -f docker/cifuzz-builder/Dockerfile .
-
 .PHONY: installer-via-docker
-installer-via-docker: docker/cifuzz-builder
+installer-via-docker:
 	mkdir -p build
-	docker run -v "${PWD}:/src" -v "${PWD}/build:/src/build:rw" cifuzz-builder make -C /src installer
+	DOCKER_BUILDKIT=1 docker build -f docker/cifuzz-builder/Dockerfile . --target bin --output build/bin
 
 .PHONY: docker/cifuzz-runner
 docker/cifuzz-runner: installer-via-docker
