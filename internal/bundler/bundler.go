@@ -213,7 +213,7 @@ func (b *Bundler) Bundle() error {
 		sanitizers = append(sanitizers, "undefined")
 	}
 
-	buildResults, err := b.buildAllVariants()
+	allVariantBuildResults, err := b.buildAllVariants()
 	if err != nil {
 		return err
 	}
@@ -223,30 +223,31 @@ func (b *Bundler) Bundle() error {
 	var fuzzers []*artifact.Fuzzer
 	archiveManifest := make(map[string]string)
 	deduplicatedSystemDeps := make(map[string]struct{})
-	for _, buildResult := range buildResults {
-		fuzzTestFuzzers, fuzzTestArchiveManifest, systemDeps, err := b.assembleArtifacts(buildResult)
-		if err != nil {
-			return err
-		}
-		fuzzers = append(fuzzers, fuzzTestFuzzers...)
-		for _, systemDep := range systemDeps {
-			deduplicatedSystemDeps[systemDep] = struct{}{}
-		}
-		// Produce an error when artifacts for different fuzzers conflict - this should never happen as
-		// assembleArtifacts is expected to add a unique prefix for each fuzz test.
-		for archivePath, absPath := range fuzzTestArchiveManifest {
-			existingAbsPath, conflict := archiveManifest[archivePath]
-			if conflict {
-				return errors.Errorf("conflict for archive path %q: %q and %q", archivePath, existingAbsPath, absPath)
+	for _, buildResults := range allVariantBuildResults {
+		for _, buildResult := range buildResults {
+			fuzzTestFuzzers, fuzzTestArchiveManifest, systemDeps, err := b.assembleArtifacts(buildResult)
+			if err != nil {
+				return err
 			}
-			archiveManifest[archivePath] = absPath
-		}
-
-		if b.Opts.OutputPath == "" {
-			if len(b.Opts.FuzzTests) == 1 {
-				b.Opts.OutputPath = filepath.Base(buildResult.Executable) + ".tar.gz"
-			} else {
-				b.Opts.OutputPath = "fuzz_tests.tar.gz"
+			fuzzers = append(fuzzers, fuzzTestFuzzers...)
+			for _, systemDep := range systemDeps {
+				deduplicatedSystemDeps[systemDep] = struct{}{}
+			}
+			// Produce an error when artifacts for different fuzzers conflict - this should never happen as
+			// assembleArtifacts is expected to add a unique prefix for each fuzz test.
+			for archivePath, absPath := range fuzzTestArchiveManifest {
+				existingAbsPath, conflict := archiveManifest[archivePath]
+				if conflict {
+					return errors.Errorf("conflict for archive path %q: %q and %q", archivePath, existingAbsPath, absPath)
+				}
+				archiveManifest[archivePath] = absPath
+			}
+			if b.Opts.OutputPath == "" {
+				if len(b.Opts.FuzzTests) == 1 {
+					b.Opts.OutputPath = filepath.Base(buildResult.Executable) + ".tar.gz"
+				} else {
+					b.Opts.OutputPath = "fuzz_tests.tar.gz"
+				}
 			}
 		}
 	}
@@ -299,7 +300,7 @@ func (b *Bundler) Bundle() error {
 	return nil
 }
 
-func (b *Bundler) buildAllVariants() ([]*build.Result, error) {
+func (b *Bundler) buildAllVariants() ([]map[string]*build.Result, error) {
 	fuzzingVariant := configureVariant{
 		// TODO: Do not hardcode these values.
 		Engine:     "libfuzzer",
@@ -339,8 +340,8 @@ func (b *Bundler) buildAllVariants() ([]*build.Result, error) {
 	}
 }
 
-func (b *Bundler) buildAllVariantsBazel(configureVariants []configureVariant) ([]*build.Result, error) {
-	var allResults []*build.Result
+func (b *Bundler) buildAllVariantsBazel(configureVariants []configureVariant) ([]map[string]*build.Result, error) {
+	var allResults []map[string]*build.Result
 	for i, variant := range configureVariants {
 		builder, err := bazel.NewBuilder(&bazel.BuilderOptions{
 			ProjectDir: b.Opts.ProjectDir,
@@ -369,14 +370,14 @@ func (b *Bundler) buildAllVariantsBazel(configureVariants []configureVariant) ([
 		if err != nil {
 			return nil, err
 		}
-		allResults = append(allResults, results...)
+		allResults = append(allResults, results)
 	}
 
 	return allResults, nil
 }
 
-func (b *Bundler) buildAllVariantsCMake(configureVariants []configureVariant) ([]*build.Result, error) {
-	var allResults []*build.Result
+func (b *Bundler) buildAllVariantsCMake(configureVariants []configureVariant) ([]map[string]*build.Result, error) {
+	var allVariantBuildResults []map[string]*build.Result
 	for i, variant := range configureVariants {
 		builder, err := cmake.NewBuilder(&cmake.BuilderOptions{
 			ProjectDir: b.Opts.ProjectDir,
@@ -411,14 +412,14 @@ func (b *Bundler) buildAllVariantsCMake(configureVariants []configureVariant) ([
 			fuzzTests = b.Opts.FuzzTests
 		}
 
-		results, err := builder.Build(fuzzTests)
+		buildResults, err := builder.Build(fuzzTests)
 		if err != nil {
 			return nil, err
 		}
-		allResults = append(allResults, results...)
+		allVariantBuildResults = append(allVariantBuildResults, buildResults)
 	}
 
-	return allResults, nil
+	return allVariantBuildResults, nil
 }
 
 func (b *Bundler) printBuildingMsg(variant configureVariant, i int) {
@@ -436,8 +437,8 @@ func (b *Bundler) printBuildingMsg(variant configureVariant, i int) {
 	log.Infof("Building for %s...", typeDisplayString)
 }
 
-func (b *Bundler) buildAllVariantsOther(configureVariants []configureVariant) ([]*build.Result, error) {
-	var results []*build.Result
+func (b *Bundler) buildAllVariantsOther(configureVariants []configureVariant) ([]map[string]*build.Result, error) {
+	var allVariantBuildResults []map[string]*build.Result
 	for i, variant := range configureVariants {
 		builder, err := other.NewBuilder(&other.BuilderOptions{
 			ProjectDir:   b.Opts.ProjectDir,
@@ -461,8 +462,9 @@ func (b *Bundler) buildAllVariantsOther(configureVariants []configureVariant) ([
 			panic("No fuzz tests specified")
 		}
 
+		buildResults := make(map[string]*build.Result)
 		for _, fuzzTest := range b.Opts.FuzzTests {
-			result, err := builder.Build(fuzzTest)
+			buildResult, err := builder.Build(fuzzTest)
 			if err != nil {
 				return nil, err
 			}
@@ -470,17 +472,17 @@ func (b *Bundler) buildAllVariantsOther(configureVariants []configureVariant) ([
 			// To avoid that subsequent builds overwrite the artifacts
 			// from this build, we copy them to a temporary directory
 			// and adjust the paths in the build.Result struct
-			tempDir := filepath.Join(b.tempDir, fuzzTestPrefix(result))
-			err = b.copyArtifactsToTempdir(result, tempDir)
+			tempDir := filepath.Join(b.tempDir, fuzzTestPrefix(buildResult))
+			err = b.copyArtifactsToTempdir(buildResult, tempDir)
 			if err != nil {
 				return nil, err
 			}
-
-			results = append(results, result)
+			buildResults[fuzzTest] = buildResult
 		}
+		allVariantBuildResults = append(allVariantBuildResults, buildResults)
 	}
 
-	return results, nil
+	return allVariantBuildResults, nil
 }
 
 func (b *Bundler) copyArtifactsToTempdir(buildResult *build.Result, tempDir string) error {

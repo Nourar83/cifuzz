@@ -305,7 +305,7 @@ func (c *runCmd) buildFuzzTest() (*build.Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		return buildResults[0], nil
+		return buildResults[c.opts.fuzzTest], nil
 	case config.BuildSystemMaven:
 		builder, err := maven.NewBuilder(&maven.BuilderOptions{
 			ProjectDir: c.opts.ProjectDir,

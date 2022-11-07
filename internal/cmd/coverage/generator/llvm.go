@@ -120,7 +120,7 @@ func (cov *LLVMCoverageGenerator) build() error {
 		if err != nil {
 			return err
 		}
-		cov.buildResult = buildResults[0]
+		cov.buildResult = buildResults[cov.FuzzTest]
 		return nil
 
 	case config.BuildSystemOther:

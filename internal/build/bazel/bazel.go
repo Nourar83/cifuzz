@@ -208,7 +208,7 @@ func (b *Builder) BuildForRun(fuzzTests []string) ([]*build.Result, error) {
 	return results, nil
 }
 
-func (b *Builder) BuildForBundle(engine string, sanitizers []string, fuzzTests []string) ([]*build.Result, error) {
+func (b *Builder) BuildForBundle(engine string, sanitizers []string, fuzzTests []string) (map[string]*build.Result, error) {
 	var err error
 
 	env, err := build.CommonBuildEnv()
@@ -321,7 +321,7 @@ func (b *Builder) BuildForBundle(engine string, sanitizers []string, fuzzTests [
 	}
 
 	// Assemble the build results
-	var results []*build.Result
+	results := make(map[string]*build.Result)
 
 	for _, fuzzTest := range fuzzTests {
 		// Get the path to the archive created by the build
@@ -392,7 +392,7 @@ func (b *Builder) BuildForBundle(engine string, sanitizers []string, fuzzTests [
 			}
 		}
 
-		result := &build.Result{
+		results[fuzzTest] = &build.Result{
 			Name:       path,
 			Executable: executable,
 			SeedCorpus: extractedCorpus,
@@ -403,7 +403,6 @@ func (b *Builder) BuildForBundle(engine string, sanitizers []string, fuzzTests [
 			Sanitizers:  sanitizers,
 			RuntimeDeps: runtimeDeps,
 		}
-		results = append(results, result)
 	}
 
 	return results, nil

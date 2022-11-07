@@ -151,7 +151,7 @@ func (b *Builder) Configure() error {
 }
 
 // Build builds the specified fuzz tests with CMake
-func (b *Builder) Build(fuzzTests []string) ([]*build.Result, error) {
+func (b *Builder) Build(fuzzTests []string) (map[string]*build.Result, error) {
 	buildDir, err := fileutil.CanonicalPath(b.BuildDir())
 	if err != nil {
 		return nil, err
@@ -185,7 +185,7 @@ func (b *Builder) Build(fuzzTests []string) ([]*build.Result, error) {
 		return nil, cmdutils.ErrSilent
 	}
 
-	var results []*build.Result
+	results := make(map[string]*build.Result)
 	for _, fuzzTest := range fuzzTests {
 		executable, err := b.findFuzzTestExecutable(fuzzTest)
 		if err != nil {
@@ -203,7 +203,7 @@ func (b *Builder) Build(fuzzTests []string) ([]*build.Result, error) {
 			}
 		}
 		generatedCorpus := filepath.Join(b.ProjectDir, ".cifuzz-corpus", fuzzTest)
-		result := &build.Result{
+		results[fuzzTest] = &build.Result{
 			Name:            fuzzTest,
 			Executable:      executable,
 			GeneratedCorpus: generatedCorpus,
@@ -214,7 +214,6 @@ func (b *Builder) Build(fuzzTests []string) ([]*build.Result, error) {
 			Sanitizers:      b.Sanitizers,
 			RuntimeDeps:     runtimeDeps,
 		}
-		results = append(results, result)
 	}
 
 	return results, nil
