@@ -18,6 +18,7 @@ import (
 	"code-intelligence.com/cifuzz/internal/testutil"
 	"code-intelligence.com/cifuzz/pkg/dependencies"
 	"code-intelligence.com/cifuzz/pkg/log"
+	"code-intelligence.com/cifuzz/util/fileutil"
 )
 
 var testOut io.ReadWriter
@@ -112,6 +113,7 @@ func TestCMakeMissing(t *testing.T) {
 
 func TestEnvVarsSetInConfigFile(t *testing.T) {
 	projectDir := testutil.BootstrapEmptyProject(t, "bundle-test-")
+	t.Cleanup(func() { fileutil.Cleanup(projectDir) })
 	configFileContent := `env:
   - FOO=foo
   - BAR
