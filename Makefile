@@ -143,9 +143,17 @@ test/unit: deps
 test/integration: deps deps/integration-tests
 	go test -v ./... -run 'TestIntegration.*'
 
+.PHONY: test/integration/docker
+test/integration/docker: docker/cifuzz-runner
+	$(call run-docker, make test/integration)
+
 .PHONY: test/integration/sequential
 test/integration/sequential: deps deps/integration-tests
 	go test -v -parallel=1 ./... -run 'TestIntegration.*'
+
+.PHONY: test/integration/sequential/docker
+test/integration/sequential/docker: docker/cifuzz-runner
+	$(call run-docker, make test/integration/sequential)
 
 .PHONY: test/race
 test/race: deps build/$(current_os)
@@ -178,3 +186,17 @@ installer-via-docker:
 	@echo "Building a cifuzz Linux installer"
 	mkdir -p build
 	DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -f docker/cifuzz-builder/Dockerfile . --target bin --output build/bin
+
+.PHONY: docker/cifuzz-runner
+docker/cifuzz-runner: installer-via-docker
+	DOCKER_BUILDKIT=1 docker build --build-arg UID="$$(id -u)" --build-arg GID="$$(id -g)" --platform linux/amd64 -t cifuzz-runner -f docker/cifuzz-runner/Dockerfile .
+
+define run-docker =
+docker run --init --privileged \
+		-v "$${PWD}:/home/user/cifuzz" \
+		-v go-mod-cache:/home/user/go/pkg/mod \
+		-v go-build-cache:/home/user/.cache/go-build \
+		--workdir /home/user/cifuzz \
+		cifuzz-runner \
+		$(1)
+endef

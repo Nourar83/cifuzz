@@ -29,11 +29,18 @@ var notes []string
 
 var shells = []string{"bash", "zsh", "fish"}
 
+var installBashCompletion bool
+var installZshCompletion bool
+var installFishCompletion bool
+
 func main() {
 	flags := pflag.NewFlagSet("cifuzz installer", pflag.ExitOnError)
 	installDirFlag := flags.StringP("install-dir", "i", "", "The directory to install cifuzz in")
 	helpRequested := flags.BoolP("help", "h", false, "")
 	flags.Bool("verbose", false, "Print verbose output")
+	flags.BoolVar(&installBashCompletion, "bash-completion", false, "Install the bash completion script even if SHELL is not bash")
+	flags.BoolVar(&installZshCompletion, "zsh-completion", false, "Install the zsh completion script even if SHELL is not zsh")
+	flags.BoolVar(&installFishCompletion, "fish-completion", false, "Install the fish completion script even if SHELL is not fish")
 	ignoreCheck := flags.Bool("ignore-installation-check", false, "Doesn't check if a previous installation already exists")
 	cmdutils.ViperMustBindPFlag("verbose", flags.Lookup("verbose"))
 
@@ -151,18 +158,30 @@ func installCIFuzz(installDir string) error {
 	// Install the autocompletion script for the current shell (if the
 	// shell is supported)
 	shell := filepath.Base(os.Getenv("SHELL"))
-	switch shell {
-	case "bash":
+	var shellCompletionInstalled bool
+	if shell == "bash" || installBashCompletion {
 		err = installBashCompletionScript(installDir)
-	case "zsh":
-		err = installZshCompletionScript(installDir)
-	case "fish":
-		err = installFishCompletionScript(installDir)
-	default:
-		log.Printf("Not installing shell completion script: Unsupported shell: %s", shell)
+		if err != nil {
+			return err
+		}
+		shellCompletionInstalled = true
 	}
-	if err != nil {
-		return err
+	if shell == "zsh" || installZshCompletion {
+		err = installZshCompletionScript(installDir)
+		if err != nil {
+			return err
+		}
+		shellCompletionInstalled = true
+	}
+	if shell == "fish" || installFishCompletion {
+		err = installFishCompletionScript(installDir)
+		if err != nil {
+			return err
+		}
+		shellCompletionInstalled = true
+	}
+	if !shellCompletionInstalled {
+		log.Printf("Not installing shell completion script: Unsupported shell: %s", shell)
 	}
 
 	// Create a symlink to the cifuzz executable
