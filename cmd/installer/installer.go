@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/Masterminds/semver"
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
 
@@ -412,11 +413,18 @@ func installFishCompletionScript(installDir string) error {
 		dir = "/usr/share/fish/vendor_completions.d"
 	} else {
 		// We run as non-root, so install the script to the user's
-		// completions directory
-		if os.Getenv("XDG_DATA_HOME") != "" {
-			dir = os.Getenv("XDG_DATA_HOME") + "/fish/vendor_completions.d"
+		// completions directory.
+		// Since fish 3.5.0, "${XDG_DATA_HOME:-~/.local/share}/fish/vendor_completions.d"
+		// is supported, which is the most suitable directory for us.
+		// Before that, only ~/.config/fish/completions is supported.
+		if fishSupportsVendorCompletionsDir() {
+			if os.Getenv("XDG_DATA_HOME") != "" {
+				dir = os.Getenv("XDG_DATA_HOME") + "/fish/vendor_completions.d"
+			} else {
+				dir = os.Getenv("HOME") + "/.local/share/fish/vendor_completions.d"
+			}
 		} else {
-			dir = os.Getenv("HOME") + "/.local/share/fish/vendor_completions.d"
+			dir = os.Getenv("HOME") + "/.config/fish/completions"
 		}
 	}
 	err := os.MkdirAll(dir, 0755)
@@ -429,6 +437,22 @@ func installFishCompletionScript(installDir string) error {
 	log.Printf("Creating symlink %s", symlinkPath)
 	err = fileutil.ForceSymlink(completionScript, symlinkPath)
 	return errors.WithStack(err)
+}
+
+func fishSupportsVendorCompletionsDir() bool {
+	cmd := exec.Command("fish", "--version")
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	versionStr := strings.Fields(string(out))[2]
+	version, err := semver.NewVersion(versionStr)
+	if err != nil {
+		return false
+	}
+	// Return true if the version is >= 3.5.0
+	return version.Compare(semver.MustParse("3.5.0")) >= 0
 }
 
 func cifuzzInPATH(installDir string) (bool, error) {
