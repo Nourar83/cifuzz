@@ -487,7 +487,7 @@ func createCommandCompletionScript(installDir, shell string) error {
 }
 
 func completionScriptPath(installDir, shell string) string {
-	return filepath.Join(installDir, "share", "cifuzz", "completions", shell)
+	return filepath.Join(installDir, "share", "cifuzz", "completions", shell, "_cifuzz")
 }
 
 func cifuzzPath(installDir string) string {
