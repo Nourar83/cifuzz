@@ -55,13 +55,28 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # Cache Docker layers to speed up building the installer via our
+      # cifuzz-builder Dockerfile
+      - name: Restore Docker cache
+        if: contains(matrix.os, 'ubuntu')
+        uses: satackey/action-docker-layer-caching@v0.0.11
+        continue-on-error: true
+
       - name: Setup VM for cifuzz
         uses: ./.github/actions/vm_setup
         with:
           os: ${{ matrix.os }}
 
       - name: Run integration tests
-        if: contains(matrix.os, 'ubuntu') || contains(matrix.os, 'mac')
+        if: contains(matrix.os, 'ubuntu')
+        # We run the integration tests sequentially here to avoid that
+        # tests write to stderr at the same time, which makes it hard to
+        # figure out which output belongs to which test.
+        run: make test/integration/sequential/docker
+        shell: bash
+
+      - name: Run integration tests
+        if: contains(matrix.os, 'mac')
         # We run the integration tests sequentially here to avoid that
         # tests write to stderr at the same time, which makes it hard to
         # figure out which output belongs to which test.
