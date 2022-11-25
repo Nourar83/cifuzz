@@ -51,14 +51,18 @@ To execute a fuzz test as a regression test the following custom configuration h
 to be added to the `.bazelrc` file in the project workspace.
 
 ```
-# --config=asan-replay
-build:asan-replay --@rules_fuzzing//fuzzing:cc_engine=@rules_fuzzing//fuzzing/engines:replay
-build:asan-replay --@rules_fuzzing//fuzzing:cc_engine_instrumentation=none
-build:asan-replay --@rules_fuzzing//fuzzing:cc_engine_sanitizer=asan
+# Replay cifuzz findings
+build:cifuzz-replay --@rules_fuzzing//fuzzing:cc_engine=@rules_fuzzing//fuzzing/engines:replay
+build:cifuzz-replay --@rules_fuzzing//fuzzing:cc_engine_instrumentation=none
+build:cifuzz-replay --@rules_fuzzing//fuzzing:cc_engine_sanitizer=asan
+build:cifuzz-replay --@rules_fuzzing//fuzzing:cc_engine_sanitizer=ubsan
+build:cifuzz-replay --compilation_mode=opt
+build:cifuzz-replay --copt=-g
+build:cifuzz-replay --copt=-U_FORTIFY_SOURCE
 ```
 
-This allows the bazel flag `--config=asan-replay` to be added to a fuzz test run via
-`bazel test --config=asan-replay`.
+This allows the bazel flag `--config=cifuzz-replay` to be added to a fuzz test run via
+`bazel test --config=cifuzz-replay`.
 
 In JetBrains IDEs with the [bazel plugin](https://plugins.jetbrains.com/plugin/8609-bazel) 
 installed, a fuzz test can be run with this configuration from the `BUILD.bazel` file which 
