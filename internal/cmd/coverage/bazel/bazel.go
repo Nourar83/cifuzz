@@ -65,8 +65,12 @@ func GenerateCoverageReport(opts *CoverageOptions) (string, error) {
 	// Flags which should only be used for bazel run because they are
 	// not supported by the other bazel commands we use
 	coverageFlags := []string{
+		// Tell bazel to do an optimized build, which includes debug
+		// symbols (in contrast to the default "fastbuild" compilation
+		// mode which strips debug symbols).
+		"--compilation_mode=opt",
 		// Build with debug symbols
-		"-c", "opt", "--copt", "-g",
+		"--copt", "-g",
 		// Disable source fortification, which is currently not supported
 		// in combination with ASan, see https://github.com/google/sanitizers/issues/247
 		"--copt", "-U_FORTIFY_SOURCE",
