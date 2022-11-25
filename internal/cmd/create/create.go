@@ -174,7 +174,10 @@ BUILD.bazel file:
         corpus = glob(
             ["%[1]s_inputs/**"],
             allow_empty = True,
-        ),
+        ) + select({
+            "@cifuzz//:collect_coverage": glob([".%[1]s_corpus/**"], allow_empty = True),
+            "//conditions:default": [],
+        }),
         deps = ["@cifuzz"],
     )
 

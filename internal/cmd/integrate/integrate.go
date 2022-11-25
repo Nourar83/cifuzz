@@ -164,7 +164,6 @@ func selectTools() ([]string, error) {
 func setupGitIgnore(projectDir string) error {
 	// Files to ignore for all build systems
 	filesToIgnore := []string{
-		"/.cifuzz-corpus/",
 		"/.cifuzz-findings/",
 	}
 
@@ -177,6 +176,11 @@ func setupGitIgnore(projectDir string) error {
 			"/.cifuzz-build/",
 			"/CMakeUserPresets.json",
 		)
+	}
+	if buildSystem == config.BuildSystemBazel {
+		filesToIgnore = append(filesToIgnore, ".*_corpus/")
+	} else {
+		filesToIgnore = append(filesToIgnore, "/.cifuzz-corpus/")
 	}
 
 	gitIgnorePath := filepath.Join(projectDir, ".gitignore")

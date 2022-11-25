@@ -195,7 +195,8 @@ func (b *Builder) BuildForRun(fuzzTests []string) ([]*build.Result, error) {
 			return nil, err
 		}
 		seedCorpus := filepath.Join(b.ProjectDir, path+"_inputs")
-		generatedCorpus := filepath.Join(b.ProjectDir, ".cifuzz-corpus", path)
+		generatedCorpusBasename := "." + filepath.Base(path) + "_corpus"
+		generatedCorpus := filepath.Join(b.ProjectDir, filepath.Dir(path), generatedCorpusBasename)
 
 		result := &build.Result{
 			Name:            path,
