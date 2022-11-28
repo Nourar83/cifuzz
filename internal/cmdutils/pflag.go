@@ -50,7 +50,7 @@ func AddBranchFlag(cmd *cobra.Command) func() {
 
 func AddBuildCommandFlag(cmd *cobra.Command) func() {
 	cmd.Flags().String("build-command", "",
-		"The `command` to build the fuzz test. Ignored when the build system is CMake.")
+		"The `command` to build the fuzz test for other build systems.")
 	return func() {
 		ViperMustBindPFlag("build-command", cmd.Flags().Lookup("build-command"))
 	}
@@ -59,8 +59,7 @@ func AddBuildCommandFlag(cmd *cobra.Command) func() {
 func AddBuildJobsFlag(cmd *cobra.Command) func() {
 	cmd.Flags().Uint("build-jobs", 0,
 		"Maximum number of concurrent processes to use when building.\n"+
-			"If argument is omitted the native build tool's default number is used.\n"+
-			"Only available when the build system is CMake.")
+			"If argument is omitted the native build tool's default number is used.")
 	cmd.Flags().Lookup("build-jobs").NoOptDefVal = "0"
 	return func() {
 		ViperMustBindPFlag("build-jobs", cmd.Flags().Lookup("build-jobs"))
