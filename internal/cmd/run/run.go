@@ -136,6 +136,13 @@ depends on the build system configured for the project.
 
   The --build-command flag is ignored.
 
+` + pterm.Style{pterm.Reset, pterm.Bold}.Sprint("Maven/Gradle") + `
+  <fuzz test> is the name of the class containing the fuzz test.
+
+  Command completion for the <fuzz test> argument is supported.
+
+  The --build-command flag is ignored.
+
 ` + pterm.Style{pterm.Reset, pterm.Bold}.Sprint("Other build systems") + `
   <fuzz test> is either the path or basename of the fuzz test executable
   created by the build command. If it's the basename, it will be searched
