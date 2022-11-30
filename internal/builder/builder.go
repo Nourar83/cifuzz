@@ -61,7 +61,9 @@ func NewCIFuzzBuilder(opts Options) (*CIFuzzBuilder, error) {
 
 	i.mutex, err = filemutex.New(i.lockFile())
 	if err != nil {
-		return nil, errors.WithStack(err)
+		// filemutex.New returns errors from syscall.Open without the
+		// path, so we wrap it in the os.PathError same as os.Open does.
+		return nil, errors.WithStack(&os.PathError{Op: "open", Path: i.lockFile(), Err: err})
 	}
 
 	err = i.createDirectoryLayout()
