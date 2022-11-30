@@ -184,7 +184,7 @@ site/update:
 .PHONY: installer-via-docker
 installer-via-docker:
 	@echo "Building a cifuzz Linux installer"
-	mkdir -p build
+	mkdir -p build/bin
 	DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -f docker/cifuzz-builder/Dockerfile . --target bin --output build/bin
 
 .PHONY: docker/cifuzz-runner
