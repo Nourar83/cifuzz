@@ -1,0 +1,15 @@
+
+Please make sure to add the following dependency to your
+build.gradle.kts to enable fuzz testing:
+
+testImplementation ("com.code-intelligence", "jazzer-junit","0.13.0")
+
+
+We highly recommend using cifuzz with JUnit >=5 to ensure
+easy IDE integration. You can add it with the following
+dependency to your build.gradle.kts:
+
+testImplementation ("org.junit.jupiter", "junit-jupiter","5.9.0")
+
+For Jacoco coverage reports, please add the jacoco plugin to your build.gradle.kts.
+
