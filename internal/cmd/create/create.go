@@ -50,6 +50,7 @@ type createCmd struct {
 var supportedTestTypes = map[string]string{
 	"C/C++": string(config.CPP),
 	"Java":  string(config.JAVA),
+	"Kotlin":  string(config.KOTLIN),
 }
 
 func New() *cobra.Command {

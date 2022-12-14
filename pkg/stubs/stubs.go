@@ -31,17 +31,26 @@ func Create(path string, testType config.FuzzTestType) error {
 
 	// read matching template
 	var content []byte
+	var ext, langInPath string
 	switch testType {
 	case config.CPP:
 		content = cppStub
-	case config.JAVA:
-		baseName := strings.TrimSuffix(filepath.Base(path), ".java")
+	case config.JAVA, config.KOTLIN:
+		if testType == config.JAVA {
+			ext = ".java"
+			langInPath = "java"
+		} else if testType == config.KOTLIN {
+			ext = ".kt"
+			langInPath = "kotlin"
+		}
+
+		baseName := strings.TrimSuffix(filepath.Base(path), ext)
 		content = []byte(strings.Replace(string(javaStub), "__CLASS_NAME__", baseName, 1))
 
 		// If we have a valid package name we add it to the template
 		// We assume the project has the standard java project structure
 		if filepath.Dir(path) != "" {
-			packagePath := strings.TrimPrefix(filepath.Dir(path), filepath.Join("src", "test", "java")+string(os.PathSeparator))
+			packagePath := strings.TrimPrefix(filepath.Dir(path), filepath.Join("src", "test", langInPath)+string(os.PathSeparator))
 			packagePath = strings.ReplaceAll(packagePath, string(os.PathSeparator), ".")
 			content = []byte(strings.Replace(string(content), "__PACKAGE__", fmt.Sprintf("package %s;", packagePath), 1))
 		}
@@ -67,6 +76,10 @@ func FuzzTestFilename(testType config.FuzzTestType) (string, error) {
 		basename = "my_fuzz_test"
 		ext = "cpp"
 		filePattern = "%s_%d.%s"
+	case config.KOTLIN:
+		basename = "MyClassFuzzTest"
+		ext = "kt"
+		filePattern = "%s%d.%s"
 	case config.JAVA:
 		basename = "MyClassFuzzTest"
 		ext = "java"
