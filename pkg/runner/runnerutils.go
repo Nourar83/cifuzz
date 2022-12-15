@@ -166,7 +166,8 @@ func AddEnvFlags(env []string, envVars []string) ([]string, error) {
 
 func FuzzerEnvironment() ([]string, error) {
 	var err error
-	var env []string
+
+	env := os.Environ()
 
 	// Tell the address sanitizer where it can find llvm-symbolizer.
 	// See https://clang.llvm.org/docs/AddressSanitizer.html#symbolizing-the-reports

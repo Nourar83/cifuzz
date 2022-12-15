@@ -189,7 +189,6 @@ var defaultBindings = []*Binding{
 
 type Options struct {
 	Args      []string
-	Env       []string
 	Bindings  []*Binding
 	OutputDir string
 }
@@ -289,8 +288,7 @@ func NewMinijail(opts *Options) (*minijail, error) {
 	bindings = append(bindings, &Binding{Source: path})
 
 	// Add binding for process_wrapper. process_wrapper changes the
-	// working directory and sets environment variables and then
-	// executes the specified command.
+	// working directory and then executes the specified command.
 	processWrapperPath, err := runfiles.Finder.ProcessWrapperPath()
 	if err != nil {
 		return nil, err
@@ -350,10 +348,6 @@ func NewMinijail(opts *Options) (*minijail, error) {
 	// The process wrapper changes the working directory inside the
 	// sandbox to the first argument
 	processWrapperArgs := []string{processWrapperPath, workdir}
-
-	// The process wrapper sets environment variables inside the sandbox
-	// to the remaining arguments until the first "--".
-	processWrapperArgs = append(processWrapperArgs, opts.Env...)
 
 	// --------------------
 	// --- Run minijail ---

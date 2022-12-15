@@ -129,13 +129,10 @@ func (r *Runner) Run(ctx context.Context) error {
 	// -----------------------------
 
 	// The environment we run the fuzzer in
-	fuzzerEnv, err := r.FuzzerEnvironment()
+	env, err := r.FuzzerEnvironment()
 	if err != nil {
 		return err
 	}
-
-	// The environment we run our minijail wrapper in
-	wrapperEnv := os.Environ()
 
 	if r.UseMinijail {
 		jazzerArgs := args
@@ -162,7 +159,6 @@ func (r *Runner) Run(ctx context.Context) error {
 		mj, err := minijail.NewMinijail(&minijail.Options{
 			Args:     jazzerArgs,
 			Bindings: bindings,
-			Env:      fuzzerEnv,
 		})
 		if err != nil {
 			return err
@@ -171,23 +167,14 @@ func (r *Runner) Run(ctx context.Context) error {
 
 		// Use the command which runs Jazzer via minijail
 		args = mj.Args
-	} else {
-		// We don't use minijail, so we can set the environment
-		// variables for the fuzzer in the wrapper environment
-		for key, value := range envutil.ToMap(fuzzerEnv) {
-			wrapperEnv, err = envutil.Setenv(wrapperEnv, key, value)
-			if err != nil {
-				return err
-			}
-		}
 	}
 
-	return r.RunLibfuzzerAndReport(ctx, args, wrapperEnv)
+	return r.RunLibfuzzerAndReport(ctx, args, env)
 }
 
 func (r *Runner) FuzzerEnvironment() ([]string, error) {
-	var env []string
 	var err error
+	env := os.Environ()
 
 	env, err = fuzzer_runner.AddEnvFlags(env, r.EnvVars)
 	if err != nil {

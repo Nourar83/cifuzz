@@ -1,47 +1,16 @@
 #include <errno.h>
-#include <stddef.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-// Includes argv[0] and the working directory.
-#define NUM_FIXED_ARGS 2u
-
-// Executes argv[2] with arguments listed after the separator and the
-// environment variables listed before the separator after changing the working
-// directory to argv[1].
+// Executes argv[3] with argv[4..argc-1] as arguments after changing the
+// working directory to argv[1].
 int main(int argc, char **argv) {
-  if (argc < 4) {
+  if (argc < 3) {
     fprintf(stderr,
-            "Usage: %s <directory> <env_name1=env_value1>... -- "
-            "<executable_path> <executable_arg1>...\n",
+            "Usage: %s <directory> <executable_path> <executable_arg1> ...\n",
             argv[0]);
     return 1;
-  }
-
-  size_t separator_index = NUM_FIXED_ARGS;
-  while (separator_index < argc && strcmp("--", argv[separator_index]) != 0) {
-    separator_index++;
-  }
-  if (separator_index >= argc - 1) {
-    fprintf(stderr,
-            "expected arguments: -- <executable_path> <executable_arg1>...\n");
-    return 1;
-  }
-
-  // All variables are listed between the fixed first arguments and the
-  // separator. We also have to account for the terminating NULL pointer.
-  size_t num_env_vars = separator_index - NUM_FIXED_ARGS;
-  size_t envp_length = num_env_vars + 1;
-  char **envp = malloc(envp_length * sizeof(char *));
-  if (envp == NULL) {
-    fprintf(stderr, "malloc failed");
-    return 1;
-  }
-  envp[envp_length - 1] = NULL;
-  for (size_t i = 0; i < num_env_vars; i++) {
-    envp[i] = argv[NUM_FIXED_ARGS + i];
   }
 
   if (chdir(argv[1]) == -1) {
@@ -49,12 +18,10 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Forward all arguments after the separator, which we know exists at this
-  // point.
-  char **executable_argv = argv + separator_index + 1;
-  if (execve(*executable_argv, executable_argv, envp) == -1) {
-    fprintf(stderr, "execve(%s) failed: %s\n", *executable_argv,
-            strerror(errno));
+  // Skip over both the process wrapper's own argv[0], the directory,
+  // and the -- separator.
+  if (execv(argv[3], argv + 3) == -1) {
+    fprintf(stderr, "execv(%s) failed: %s\n", argv[3], strerror(errno));
     return 1;
   }
   // Not reached.
