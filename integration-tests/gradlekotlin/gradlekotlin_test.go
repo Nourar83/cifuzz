@@ -132,7 +132,7 @@ func TestIntegration_GradleKotlin_InitCreateRun(t *testing.T) {
 	createJacocoXMLCoverageReport(t, cifuzz, projectDir)
 
 	// Run cifuzz bundle and verify the contents of the archive.
-	shared.TestBundleGradleKotlin(t, projectDir, cifuzz, "com.example.FuzzTestCase")
+	shared.TestBundleGradle(t, projectDir, cifuzz, "com.example.FuzzTestCase")
 }
 
 func createJacocoXMLCoverageReport(t *testing.T, cifuzz, dir string) {
@@ -152,7 +152,11 @@ func createJacocoXMLCoverageReport(t *testing.T, cifuzz, dir string) {
 
 	// Check that the coverage report contains coverage for
 	// ExploreMe.kt source file, but not for App.kt.
-	summary := summary.ParseJacocoXML(reportPath)
+	reportFile, err := os.Open(reportPath)
+	require.NoError(t, err)
+	defer reportFile.Close()
+	summary := summary.ParseJacocoXML(reportFile)
+
 	for _, file := range summary.Files {
 		if file.Filename == "com/example/ExploreMe.kt" {
 			assert.Equal(t, 2, file.Coverage.FunctionsHit)

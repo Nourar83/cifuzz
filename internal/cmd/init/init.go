@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -26,6 +27,9 @@ var mavenSetup string
 
 //go:embed instructions/gradle
 var gradleSetup string
+
+//go:embed instructions/gradlekotlin
+var gradleKotlinSetup string
 
 type Options struct {
 	Dir string
@@ -121,6 +125,11 @@ func setUpAndMentionBuildSystemIntegrations(dir string) {
 	case config.BuildSystemMaven:
 		log.Print(mavenSetup)
 	case config.BuildSystemGradle:
-		log.Print(gradleSetup)
+		kts, _ := fileutil.Exists(filepath.Join(dir, "build.gradle.kts"))
+		if kts {
+			log.Print(gradleKotlinSetup)
+		} else {
+			log.Print(gradleSetup)
+		}
 	}
 }
