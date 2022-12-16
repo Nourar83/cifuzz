@@ -78,25 +78,28 @@ var fixedMinijailArgs = []string{
 	"-p", // PID namespace
 	"-l", // IPC namespace
 	"-I", // Run jailed process as init.
+}
+
+var minijailConfigLines = []string{
 	// Mount the whole filesystem read-only. All paths which should be
 	// writable have to be added explicitly as read-write bindings.
-	"-k", "/,/,none," + strconv.Itoa(MS_RDONLY|MS_BIND|MS_REC),
+	"mount=/,/,none," + strconv.Itoa(MS_RDONLY|MS_BIND|MS_REC),
 	// Mount a new procfs on /proc
-	"-k", "proc,/proc,proc," + strconv.Itoa(MS_RDONLY),
+	"mount=proc,/proc,proc," + strconv.Itoa(MS_RDONLY),
 	// Mount a new tmpfs on /dev/shm
-	"-k", "tmpfs,/dev/shm,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
+	"mount=tmpfs,/dev/shm,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
 	// Applications generally assume that /tmp is writable, so we mount
 	// a tmpfs on /tmp.
 	// Note that this causes paths below /tmp which are printed by the
 	// application not being accessible on the host. The alternative
 	// would be to mount the /tmp from the host read-writable, but that
 	// could cause PID file collisions.
-	"-k", "tmpfs,/tmp,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
+	"mount=tmpfs,/tmp,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
 	// Same as for /tmp, /run and /var/run should be writable
-	"-k", "tmpfs,/run,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
-	"-k", "tmpfs,/var/run,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
-	// Added by us, to log to stderr
-	"--logging=stderr",
+	"mount=tmpfs,/run,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
+	"mount=tmpfs,/var/run,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
+	// Always log to stderr
+	"logging=stderr",
 }
 
 var defaultBindings = []*Binding{
@@ -217,7 +220,7 @@ func NewMinijail(opts *Options) (*minijail, error) {
 	}
 	bindings = append(bindings, &Binding{Source: processWrapperPath})
 
-	// Create the bindings
+	// Add bindings to the minijail config
 	for _, binding := range bindings {
 		if binding.Target == "" {
 			binding.Target = binding.Source
@@ -248,8 +251,17 @@ func NewMinijail(opts *Options) (*minijail, error) {
 			}
 		}
 
-		minijailArgs = append(minijailArgs, "-b", binding.String())
+		minijailConfigLines = append(minijailConfigLines, "bind-mount="+binding.String())
 	}
+
+	// Write the config file
+	configFile := filepath.Join(chrootDir, "minijail.conf")
+	configFileContent := strings.Join(append([]string{"% minijail-config-file v0"}, minijailConfigLines...), "\n")
+	err = os.WriteFile(configFile, []byte(configFileContent), 0700)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	minijailArgs = append(minijailArgs, "--config", configFile)
 
 	// -----------------------------------
 	// --- Set up process wrapper args ---
