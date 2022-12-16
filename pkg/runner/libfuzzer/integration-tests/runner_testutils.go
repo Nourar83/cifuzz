@@ -14,6 +14,7 @@ import (
 	"code-intelligence.com/cifuzz/internal/config"
 	"code-intelligence.com/cifuzz/pkg/report"
 	"code-intelligence.com/cifuzz/pkg/runner/libfuzzer"
+	"code-intelligence.com/cifuzz/util/fileutil"
 	"code-intelligence.com/cifuzz/util/stringutil"
 )
 
@@ -75,10 +76,12 @@ func (test *RunnerTest) Start(t *testing.T, reportCh chan *report.Report) error 
 	if test.GeneratedCorpusDir == "" {
 		test.GeneratedCorpusDir, err = os.MkdirTemp("", "corpus")
 		require.NoError(t, err)
+		t.Cleanup(func() { fileutil.Cleanup(test.GeneratedCorpusDir) })
 	}
 
 	seedCorpusDir, err := os.MkdirTemp("", "seeds")
 	require.NoError(t, err)
+	t.Cleanup(func() { fileutil.Cleanup(seedCorpusDir) })
 
 	if test.RunsLimit != -1 {
 		// Limit the number of runs
