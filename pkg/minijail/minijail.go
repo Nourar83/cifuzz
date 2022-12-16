@@ -9,6 +9,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"code-intelligence.com/cifuzz/pkg/log"
 	"code-intelligence.com/cifuzz/pkg/runfiles"
 	"code-intelligence.com/cifuzz/util/fileutil"
 	"code-intelligence.com/cifuzz/util/stringutil"
@@ -89,11 +90,10 @@ var minijailConfigLines = []string{
 	// Mount a new tmpfs on /dev/shm
 	"mount=tmpfs,/dev/shm,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
 	// Applications generally assume that /tmp is writable, so we mount
-	// a tmpfs on /tmp.
-	// Note that this causes paths below /tmp which are printed by the
-	// application not being accessible on the host. The alternative
-	// would be to mount the /tmp from the host read-writable, but that
-	// could cause PID file collisions.
+	// a tmpfs on /tmp. The alternative would be to mount the /tmp from
+	// the host read-writable, but that could cause PID file collisions.
+	// Note that below, we add read-only bind-mounts for all
+	// subdirectories of /tmp.
 	"mount=tmpfs,/tmp,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
 	// Same as for /tmp, /run and /var/run should be writable
 	"mount=tmpfs,/run,tmpfs," + strconv.Itoa(MS_NOSUID|MS_NODEV|MS_STRICTATIME) + ",mode=1777",
@@ -190,7 +190,43 @@ func NewMinijail(opts *Options) (*minijail, error) {
 	// -----------------------
 	// --- Set up bindings ---
 	// -----------------------
-	bindings := append(opts.Bindings, defaultBindings...)
+	var bindings []*Binding
+
+	// Add bindings for all subdirectories of /tmp. These are not already
+	// mounted from the host because above we mounted a tmpfs on /tmp.
+	// We still want read-only bind-mounts of the subdirectories because
+	// those could contain files used by the fuzz test, for example a
+	// temporary project directory.
+	// We don't mount top-level files of /tmp because PID files are often
+	// stored there, which could lead to PID collisions with the host.
+	// We add those bindings first because they can be overwritten by
+	// read-write bindings in opts.Bindings.
+	entries, err := os.ReadDir("/tmp")
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	chrootDirFileInfo, err := os.Stat(chrootDir)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		fileInfo, err := entry.Info()
+		if err != nil {
+			// Skip the directory if it's not accessible
+			continue
+		}
+		// Don't add bind-mounts for the chroot dir itself
+		if os.SameFile(fileInfo, chrootDirFileInfo) {
+			continue
+		}
+		bindings = append(bindings, &Binding{Source: "/tmp" + entry.Name()})
+	}
+
+	bindings = append(bindings, opts.Bindings...)
+	bindings = append(bindings, defaultBindings...)
 
 	// Allow read-write access to the minijail output directory
 	if opts.OutputDir != "" {
@@ -257,6 +293,7 @@ func NewMinijail(opts *Options) (*minijail, error) {
 	// Write the config file
 	configFile := filepath.Join(chrootDir, "minijail.conf")
 	configFileContent := strings.Join(append([]string{"% minijail-config-file v0"}, minijailConfigLines...), "\n")
+	log.Debugf("%s:\n%s", configFile, configFileContent)
 	err = os.WriteFile(configFile, []byte(configFileContent), 0700)
 	if err != nil {
 		return nil, errors.WithStack(err)
