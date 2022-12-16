@@ -10,20 +10,11 @@ import (
 	"github.com/pkg/errors"
 
 	"code-intelligence.com/cifuzz/pkg/runfiles"
-	"code-intelligence.com/cifuzz/util/envutil"
 	"code-intelligence.com/cifuzz/util/fileutil"
 	"code-intelligence.com/cifuzz/util/stringutil"
 )
 
 const (
-	EnvPrefix = "CIFUZZ_MINIJAIL_"
-
-	DebugEnvVarName    = EnvPrefix + "DEBUG"
-	BindingsEnvVarName = EnvPrefix + "BINDINGS"
-
-	BindingFlag = "bind"
-	EnvFlag     = "env"
-
 	// Mount flags as defined in golang.org/x/sys/unix. We're not using
 	// that package because it's not available on macOS.
 	MS_RDONLY      = 0x1
@@ -63,75 +54,6 @@ func (b *Binding) String() string {
 		return fmt.Sprintf("%s,%s", b.Source, b.Target)
 	}
 	return b.Source
-}
-
-func BindingFromString(s string) (*Binding, error) {
-	tokens := strings.SplitN(s, ",", 3)
-	switch len(tokens) {
-	case 1:
-		return &Binding{Source: tokens[0], Target: tokens[0], Writable: 0}, nil
-	case 2:
-		return &Binding{Source: tokens[0], Target: tokens[1], Writable: 0}, nil
-	case 3:
-		writable, err := strconv.Atoi(tokens[2])
-		if err != nil {
-			return nil, errors.WithStack(err)
-		}
-		return &Binding{Source: tokens[0], Target: tokens[1], Writable: WritableOption(writable)}, nil
-	}
-	return nil, errors.Errorf("Bad binding: %s", s)
-}
-
-// Deprecated: Use AddMinijailBindingToEnv instead, which doesn't use os.Setenv.
-// TODO(adrian): AddMinijailBindingDeprecated will be removed once all adapters are
-// rewritten (CIFUZZ-1289).
-func AddMinijailBindingDeprecated(path string, writable WritableOption) error {
-	binding, err := getMinijailBinding(path, writable)
-	if err != nil {
-		return err
-	}
-
-	bindings := os.Getenv(BindingsEnvVarName)
-	if bindings == "" {
-		bindings = binding
-	} else {
-		bindings += ":" + binding
-	}
-
-	err = os.Setenv(BindingsEnvVarName, bindings)
-	if err != nil {
-		return errors.WithStack(err)
-	}
-
-	return nil
-}
-
-func AddMinijailBindingToEnv(env []string, binding *Binding) ([]string, error) {
-	bindings := envutil.Getenv(env, BindingsEnvVarName)
-	if bindings == "" {
-		bindings = binding.String()
-	} else {
-		bindings += ":" + binding.String()
-	}
-
-	env, err := envutil.Setenv(env, BindingsEnvVarName, bindings)
-	if err != nil {
-		return nil, err
-	}
-
-	return env, nil
-}
-
-func getMinijailBinding(path string, writable WritableOption) (string, error) {
-	src, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", errors.WithStack(err)
-	}
-	writableStr := "0"
-	if writable == ReadWrite {
-		writableStr = "1"
-	}
-	return fmt.Sprintf("%s,%s,%s", src, path, writableStr), nil
 }
 
 var fixedMinijailArgs = []string{
@@ -294,19 +216,6 @@ func NewMinijail(opts *Options) (*minijail, error) {
 		return nil, err
 	}
 	bindings = append(bindings, &Binding{Source: processWrapperPath})
-
-	// Add additional bindings from the environment variable
-	additionalBindingsEnv := os.Getenv(BindingsEnvVarName)
-	for _, s := range strings.Split(additionalBindingsEnv, ":") {
-		if s == "" {
-			continue
-		}
-		binding, err := BindingFromString(s)
-		if err != nil {
-			return nil, err
-		}
-		bindings = append(bindings, binding)
-	}
 
 	// Create the bindings
 	for _, binding := range bindings {
