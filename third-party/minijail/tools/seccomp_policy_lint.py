@@ -59,15 +59,21 @@ def parse_args(argv):
         '--denylist',
         action='store_true',
         help='Check as a denylist policy rather than the default allowlist.')
+    parser.add_argument(
+        '--dangerous-syscalls',
+        action='store',
+        default=','.join(DANGEROUS_SYSCALLS),
+        help='Comma-separated list of dangerous sycalls (overrides default).'
+    )
     parser.add_argument('policy',
                             help='The seccomp policy.',
                             type=argparse.FileType('r', encoding='utf-8'))
     return parser.parse_args(argv), parser
 
-def check_seccomp_policy(check_file):
+def check_seccomp_policy(check_file, dangerous_syscalls):
     """Fail if the seccomp policy file has dangerous, undocumented syscalls.
 
-    Takes in a file object as an argument.
+    Takes in a file object and a set of dangerous syscalls as arguments.
     """
 
     found_syscalls = set()
@@ -80,22 +86,18 @@ def check_seccomp_policy(check_file):
         if re.match(r'^\s*#', line):
             prev_line_comment = True
         elif re.match(r'^\s*$', line):
-            # Empty lines shouldn't reset prev_line_comment
+            # Empty lines shouldn't reset prev_line_comment.
             continue
         else:
             match = re.match(fr'^\s*(\w*)\s*:', line)
-            if not match:
-                errors.append(f'{check_file.name}, {line_num}: syscall not '
-                              'found in beginning of line. '
-                              'Line must begin in the form "<syscall>:".')
-            else:
+            if match:
                 syscall = match.group(1)
                 if syscall in found_syscalls:
                     errors.append(f'{check_file.name}, line {line_num}: repeat '
                                   f'syscall: {syscall}')
                 else:
                     found_syscalls.add(syscall)
-                    for dangerous in DANGEROUS_SYSCALLS:
+                    for dangerous in dangerous_syscalls:
                         if dangerous == syscall:
                             # Dangerous syscalls must be preceded with a
                             # comment.
@@ -107,6 +109,11 @@ def check_seccomp_policy(check_file):
                                               'requires a comment on the '
                                               'preceding line')
                 prev_line_comment = False
+            else:
+                # This line is probably a continuation from the previous line.
+                # TODO(b/203216289): Support line breaks.
+                pass
+
     if contains_dangerous_syscall:
         msg = (f'seccomp: {check_file.name} contains dangerous syscalls, so'
                ' requires review from chromeos-security@')
@@ -128,13 +135,17 @@ def main(argv=None):
 
     opts, _arg_parser = parse_args(argv)
 
-    ret = check_seccomp_policy(opts.policy)
+    check = check_seccomp_policy(opts.policy,
+                                 set(opts.dangerous_syscalls.split(',')))
 
     formatted_items = ''
-    if ret.errors:
+    if check.errors:
         item_prefix = '\n    * '
-        formatted_items = item_prefix + item_prefix.join(ret.errors)
-    print('* ' + ret.message + formatted_items)
+        formatted_items = item_prefix + item_prefix.join(check.errors)
+
+    print('* ' + check.message + formatted_items)
+
+    return 1 if check.errors else 0
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:]))

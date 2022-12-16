@@ -1,4 +1,4 @@
-# Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
+# Copyright 2012 The ChromiumOS Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -10,12 +10,45 @@ PRELOADNAME = libminijailpreload.so
 PRELOADPATH = "$(LIBDIR)/$(PRELOADNAME)"
 CPPFLAGS += -DPRELOADPATH='$(PRELOADPATH)'
 
+# We don't build static libs by default.
+BUILD_STATIC_LIBS ?= no
+
 # Defines the pivot root path used by the minimalistic-mountns profile.
 DEFAULT_PIVOT_ROOT ?= /var/empty
 CPPFLAGS += -DDEFAULT_PIVOT_ROOT='"$(DEFAULT_PIVOT_ROOT)"'
 
+# These are configurable strictness settings. Not every use case for Minijail
+# has the same requirements.
+
+# Allow seccomp to fail without a warning. You probably don't want this.
 ifeq ($(USE_seccomp),no)
 CPPFLAGS += -DUSE_SECCOMP_SOFTFAIL
+endif
+
+# Prevent Minijail configuration files from residing in a noexec
+# filesystem.
+#
+# The rationale here is that a configuration file that controls how a program
+# executes should be subject to the same restrictions as the executable it
+# controls. In essence, a configuration file should be considered to have as
+# much power as an executable. Files can only be executed from filesystems *not*
+# mounted as noexec, so configuration files should not reside in noexec
+# filesystems.
+#
+# For example, on ChromeOS executable filesystems are mounted read-only. Noexec
+# filesystems are allowed to be mounted read-write. If a configuration file
+# were allowed to reside in a noexec filesystem, an attacker would be able to
+# influence how a program is executed by modifying the configuration file.
+BLOCK_NOEXEC_CONF ?= no
+ifeq ($(BLOCK_NOEXEC_CONF),yes)
+CPPFLAGS += -DBLOCK_NOEXEC_CONF
+endif
+
+# Prevent Minijail configuration files from residing in a partition different
+# from the partition mounted at /. This is primarily used in ChromeOS.
+ENFORCE_ROOTFS_CONF ?= no
+ifeq ($(ENFORCE_ROOTFS_CONF),yes)
+CPPFLAGS += -DENFORCE_ROOTFS_CONF
 endif
 
 # Allow people to use -L and related flags.
@@ -25,6 +58,26 @@ CPPFLAGS += -DALLOW_DEBUG_LOGGING
 ifeq ($(SECCOMP_DEFAULT_RET_LOG),yes)
 CPPFLAGS += -DSECCOMP_DEFAULT_RET_LOG
 endif
+endif
+
+# Prevent Minijail from following symlinks when performing bind mounts.
+# BINDMOUNT_ALLOWED_PREFIXES allows some flexibility. This is especially useful
+# for directories that are not normally modifiable by non-root users.
+# If a process can modify these directories, they probably don't need to mess
+# with Minijail bind mounts to gain root privileges.
+BINDMOUNT_ALLOWED_PREFIXES ?= /dev,/sys
+CPPFLAGS += -DBINDMOUNT_ALLOWED_PREFIXES='"$(BINDMOUNT_ALLOWED_PREFIXES)"'
+BLOCK_SYMLINKS_IN_BINDMOUNT_PATHS ?= no
+ifeq ($(BLOCK_SYMLINKS_IN_BINDMOUNT_PATHS),yes)
+CPPFLAGS += -DBLOCK_SYMLINKS_IN_BINDMOUNT_PATHS
+endif
+
+# Prevents symlinks from being followed in the /tmp folder.
+# Symlinks could be followed to modify arbitrary files when a process
+# had access to the /tmp folder.
+BLOCK_SYMLINKS_IN_NONINIT_MOUNTNS_TMP ?= no
+ifeq ($(BLOCK_SYMLINKS_IN_NONINIT_MOUNTNS_TMP),yes)
+CPPFLAGS += -DBLOCK_SYMLINKS_IN_NONINIT_MOUNTNS_TMP
 endif
 
 ifeq ($(USE_ASAN),yes)
@@ -49,20 +102,27 @@ MJ_COMMON_FLAGS = -Wunused-parameter -Wextra -Wno-missing-field-initializers
 CFLAGS += $(MJ_COMMON_FLAGS)
 CXXFLAGS += $(MJ_COMMON_FLAGS)
 
+# Dependencies that all gtest based unittests should have.
+UNITTEST_LIBS := -l:libcap.a
+UNITTEST_DEPS := testrunner.o test_util.o
+
 USE_SYSTEM_GTEST ?= no
 ifeq ($(USE_SYSTEM_GTEST),no)
 GTEST_CXXFLAGS := -std=gnu++14
 GTEST_LIBS := gtest.a
+UNITTEST_DEPS += $(GTEST_LIBS)
 else
 GTEST_CXXFLAGS := $(shell gtest-config --cxxflags 2>/dev/null || \
   echo "-pthread")
 GTEST_LIBS := $(shell gtest-config --libs 2>/dev/null || \
   echo "-lgtest -pthread -lpthread")
 endif
+UNITTEST_LIBS += $(GTEST_LIBS)
 
 CORE_OBJECT_FILES := libminijail.o syscall_filter.o signal_handler.o \
-		bpf.o util.o system.o syscall_wrapper.o \
-		libconstants.gen.o libsyscalls.gen.o
+		bpf.o landlock_util.o util.o system.o syscall_wrapper.o \
+		config_parser.o libconstants.gen.o libsyscalls.gen.o
+UNITTEST_DEPS += $(CORE_OBJECT_FILES)
 
 all: CC_BINARY(minijail0) CC_LIBRARY(libminijail.so) \
 	CC_LIBRARY(libminijailpreload.so)
@@ -75,7 +135,7 @@ tests: TEST(CXX_BINARY(libminijail_unittest)) \
 	TEST(CXX_BINARY(syscall_filter_unittest)) \
 	TEST(CXX_BINARY(system_unittest)) \
 	TEST(CXX_BINARY(util_unittest)) \
-
+	TEST(CXX_BINARY(config_parser_unittest))
 
 CC_BINARY(minijail0): LDLIBS += -l:libcap.a -ldl
 CC_BINARY(minijail0): $(CORE_OBJECT_FILES) \
@@ -91,14 +151,14 @@ CC_STATIC_LIBRARY(libminijail.pic.a): $(CORE_OBJECT_FILES)
 CC_STATIC_LIBRARY(libminijail.pie.a): $(CORE_OBJECT_FILES)
 clean: CLEAN(libminijail.*.a)
 
+ifeq ($(BUILD_STATIC_LIBS),yes)
+all: CC_STATIC_LIBRARY(libminijail.pic.a) CC_STATIC_LIBRARY(libminijail.pie.a)
+endif
+
 CXX_BINARY(libminijail_unittest): CXXFLAGS += -Wno-write-strings \
 						$(GTEST_CXXFLAGS)
-CXX_BINARY(libminijail_unittest): LDLIBS += -l:libcap.a $(GTEST_LIBS)
-ifeq ($(USE_SYSTEM_GTEST),no)
-CXX_BINARY(libminijail_unittest): $(GTEST_LIBS)
-endif
-CXX_BINARY(libminijail_unittest): libminijail_unittest.o $(CORE_OBJECT_FILES) \
-		testrunner.o
+CXX_BINARY(libminijail_unittest): LDLIBS += $(UNITTEST_LIBS)
+CXX_BINARY(libminijail_unittest): $(UNITTEST_DEPS) libminijail_unittest.o
 clean: CLEAN(libminijail_unittest)
 
 TEST(CXX_BINARY(libminijail_unittest)): CC_LIBRARY(libminijailpreload.so)
@@ -110,48 +170,38 @@ clean: CLEAN(libminijailpreload.so)
 
 
 CXX_BINARY(minijail0_cli_unittest): CXXFLAGS += $(GTEST_CXXFLAGS)
-CXX_BINARY(minijail0_cli_unittest): LDLIBS += -l:libcap.a $(GTEST_LIBS)
-ifeq ($(USE_SYSTEM_GTEST),no)
-CXX_BINARY(minijail0_cli_unittest): $(GTEST_LIBS)
-endif
-CXX_BINARY(minijail0_cli_unittest): minijail0_cli_unittest.o \
-		$(CORE_OBJECT_FILES) minijail0_cli.o elfparse.o testrunner.o
+CXX_BINARY(minijail0_cli_unittest): LDLIBS += $(UNITTEST_LIBS)
+CXX_BINARY(minijail0_cli_unittest): $(UNITTEST_DEPS) minijail0_cli_unittest.o \
+		minijail0_cli.o elfparse.o
 clean: CLEAN(minijail0_cli_unittest)
 
 
+CXX_BINARY(config_parser_unittest): CXXFLAGS += $(GTEST_CXXFLAGS)
+CXX_BINARY(config_parser_unittest): LDLIBS += $(UNITTEST_LIBS)
+CXX_BINARY(config_parser_unittest): $(UNITTEST_DEPS) config_parser_unittest.o
+clean: CLEAN(config_parser_unittest)
+
 CXX_BINARY(syscall_filter_unittest): CXXFLAGS += -Wno-write-strings \
 						$(GTEST_CXXFLAGS)
-CXX_BINARY(syscall_filter_unittest): LDLIBS += -l:libcap.a $(GTEST_LIBS)
-ifeq ($(USE_SYSTEM_GTEST),no)
-CXX_BINARY(syscall_filter_unittest): $(GTEST_LIBS)
-endif
-CXX_BINARY(syscall_filter_unittest): syscall_filter_unittest.o \
-		$(CORE_OBJECT_FILES) testrunner.o
+CXX_BINARY(syscall_filter_unittest): LDLIBS += $(UNITTEST_LIBS)
+CXX_BINARY(syscall_filter_unittest): $(UNITTEST_DEPS) syscall_filter_unittest.o
 clean: CLEAN(syscall_filter_unittest)
 
 
 CXX_BINARY(system_unittest): CXXFLAGS += $(GTEST_CXXFLAGS)
-CXX_BINARY(system_unittest): LDLIBS += -l:libcap.a $(GTEST_LIBS)
-ifeq ($(USE_SYSTEM_GTEST),no)
-CXX_BINARY(system_unittest): $(GTEST_LIBS)
-endif
-CXX_BINARY(system_unittest): system_unittest.o \
-		$(CORE_OBJECT_FILES) testrunner.o
+CXX_BINARY(system_unittest): LDLIBS += $(UNITTEST_LIBS)
+CXX_BINARY(system_unittest): $(UNITTEST_DEPS) system_unittest.o
 clean: CLEAN(system_unittest)
 
 
 CXX_BINARY(util_unittest): CXXFLAGS += $(GTEST_CXXFLAGS)
-CXX_BINARY(util_unittest): LDLIBS += -l:libcap.a $(GTEST_LIBS)
-ifeq ($(USE_SYSTEM_GTEST),no)
-CXX_BINARY(util_unittest): $(GTEST_LIBS)
-endif
-CXX_BINARY(util_unittest): util_unittest.o \
-		$(CORE_OBJECT_FILES) testrunner.o
+CXX_BINARY(util_unittest): LDLIBS += $(UNITTEST_LIBS)
+CXX_BINARY(util_unittest): $(UNITTEST_DEPS) util_unittest.o
 clean: CLEAN(util_unittest)
 
 
 CXX_BINARY(parse_seccomp_policy): parse_seccomp_policy.o syscall_filter.o \
-		bpf.o util.o libconstants.gen.o libsyscalls.gen.o
+		bpf.o landlock_util.o util.o libconstants.gen.o libsyscalls.gen.o
 clean: CLEAN(parse_seccomp_policy)
 
 
@@ -173,10 +223,9 @@ libsyscalls.gen.o.depends: libsyscalls.gen.c
 
 # Only regenerate libsyscalls.gen.c if the Makefile or header changes.
 # NOTE! This will not detect if the file is not appropriate for the target.
-libsyscalls.gen.c: $(SRC)/Makefile $(SRC)/libsyscalls.h
-	@printf "Generating target-arch specific $@...\n"
+libsyscalls.gen.c: $(SRC)/libsyscalls.h $(SRC)/Makefile
+	@/bin/echo -e "GEN		$(subst $(SRC)/,,$<) ->  $@"
 	$(QUIET)CC="$(CC)" $(SRC)/gen_syscalls.sh "$@"
-	@printf "$@ done.\n"
 clean: CLEAN(libsyscalls.gen.c)
 
 $(eval $(call add_object_rules,libsyscalls.gen.o,CC,c,CFLAGS))
@@ -187,10 +236,9 @@ libconstants.gen.o.depends: libconstants.gen.c
 
 # Only regenerate libconstants.gen.c if the Makefile or header changes.
 # NOTE! This will not detect if the file is not appropriate for the target.
-libconstants.gen.c: $(SRC)/Makefile $(SRC)/libconstants.h
-	@printf "Generating target-arch specific $@...\n"
+libconstants.gen.c: $(SRC)/libconstants.h $(SRC)/Makefile
+	@/bin/echo -e "GEN		$(subst $(SRC)/,,$<) ->  $@"
 	$(QUIET)CC="$(CC)" $(SRC)/gen_constants.sh "$@"
-	@printf "$@ done.\n"
 clean: CLEAN(libconstants.gen.c)
 
 $(eval $(call add_object_rules,libconstants.gen.o,CC,c,CFLAGS))
@@ -202,7 +250,7 @@ $(eval $(call add_object_rules,libconstants.gen.o,CC,c,CFLAGS))
 ifeq ($(USE_SYSTEM_GTEST),no)
 # Points to the root of Google Test, relative to where this file is.
 # Remember to tweak this if you move this file.
-GTEST_DIR = googletest-release-1.10.0/googletest
+GTEST_DIR = googletest-release-1.11.0/googletest
 
 # Flags passed to the preprocessor.
 # Set Google Test's header directory as a system directory, such that
@@ -221,7 +269,7 @@ GTEST_HEADERS = $(GTEST_DIR)/include/gtest/*.h \
 clean: clean_gtest
 
 clean_gtest:
-	rm -f gtest.a gtest_main.a *.o
+	$(QUIET)rm -f gtest.a gtest_main.a *.o
 
 # Builds gtest.a and gtest_main.a.
 
