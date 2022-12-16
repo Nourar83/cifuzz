@@ -1,4 +1,4 @@
-/* Copyright 2016 The Chromium OS Authors. All rights reserved.
+/* Copyright 2016 The ChromiumOS Authors
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  *
@@ -23,9 +23,11 @@
 #include <set>
 #include <string>
 
+#include "landlock_util.h"
 #include "libminijail-private.h"
 #include "libminijail.h"
 #include "scoped_minijail.h"
+#include "unittest_util.h"
 #include "util.h"
 
 namespace {
@@ -99,6 +101,15 @@ std::map<std::string, std::string> GetNamespaces(
     namespaces.emplace(namespace_name, std::string(buf, len));
   }
   return namespaces;
+}
+
+void set_preload_path(minijail *j) {
+  // We need to get the absolute path because entering a new mntns will
+  // implicitly chdir(/) for us.
+  char *preload_path = realpath(kPreloadPath, nullptr);
+  ASSERT_NE(preload_path, nullptr);
+  minijail_set_preload_path(j, preload_path);
+  free(preload_path);
 }
 
 }  // namespace
@@ -224,6 +235,19 @@ TEST_F(MarshalTest, 0xff) {
 
 TEST_F(MarshalTest, copy_empty) {
   ASSERT_EQ(0, minijail_copy_jail(m_, j_));
+}
+
+TEST_F(MarshalTest, profile_flags) {
+  minijail_bind(m_, "/var", "/var", false);
+  minijail_set_using_minimalistic_mountns(m_);
+  minijail_set_enable_profile_fs_restrictions(m_);
+  minijail_add_minimalistic_mountns_fs_rules(m_);
+  size_ = minijail_size(m_);
+  for (size_t offset = 0; offset < 8; ++offset) {
+    do_log(LOG_INFO, "offset: %zu", offset);
+    ASSERT_EQ(0, minijail_marshal(m_, buf_ + offset, sizeof(buf_) - offset));
+    EXPECT_EQ(0, minijail_unmarshal(j_, buf_ + offset, size_));
+  }
 }
 
 TEST(KillTest, running_process) {
@@ -569,7 +593,7 @@ TEST(Test, minijail_run_env_pid_pipes) {
     GTEST_SKIP();
 
   ScopedMinijail j(minijail_new());
-  minijail_set_preload_path(j.get(), kPreloadPath);
+  set_preload_path(j.get());
 
   char *argv[4];
   argv[0] = const_cast<char*>(kCatPath);
@@ -632,37 +656,12 @@ TEST(Test, minijail_run_fd_env_pid_pipes) {
     GTEST_SKIP();
 
   ScopedMinijail j(minijail_new());
-  minijail_set_preload_path(j.get(), kPreloadPath);
+  set_preload_path(j.get());
 
   char *argv[4];
-  argv[0] = const_cast<char*>(kCatPath);
-  argv[1] = nullptr;
-
-  pid_t pid;
-  int child_stdin, child_stdout;
-  int mj_run_ret = minijail_run_pid_pipes(
-      j.get(), argv[0], argv, &pid, &child_stdin, &child_stdout, NULL);
-  EXPECT_EQ(mj_run_ret, 0);
-
-  char teststr[] = "test\n";
-  const size_t teststr_len = strlen(teststr);
-  ssize_t write_ret = write(child_stdin, teststr, teststr_len);
-  EXPECT_EQ(write_ret, static_cast<ssize_t>(teststr_len));
-
-  char buf[kBufferSize] = {};
-  ssize_t read_ret = read(child_stdout, buf, sizeof(buf) - 1);
-  EXPECT_EQ(read_ret, static_cast<ssize_t>(teststr_len));
-  EXPECT_STREQ(buf, teststr);
-
-  int status;
-  EXPECT_EQ(kill(pid, SIGTERM), 0);
-  EXPECT_EQ(waitpid(pid, &status, 0), pid);
-  ASSERT_TRUE(WIFSIGNALED(status));
-  EXPECT_EQ(WTERMSIG(status), SIGTERM);
-
   argv[0] = const_cast<char*>(kShellPath);
   argv[1] = "-c";
-  argv[2] = "#!/bin/sh\necho \"${TEST_PARENT+set}|${TEST_VAR}\" >&2\n";
+  argv[2] = "echo \"${TEST_PARENT+set}|${TEST_VAR}\" >&2\n";
   argv[3] = nullptr;
 
   char *envp[2];
@@ -672,27 +671,8 @@ TEST(Test, minijail_run_fd_env_pid_pipes) {
   // Set a canary env var in the parent that should not be present in the child.
   ASSERT_EQ(setenv("TEST_PARENT", "test", 1 /*overwrite*/), 0);
 
-  // MFD_CLOEXEC cannot be used because the test fd begins with #!.
-  int elf_fd = memfd_create("test", MFD_ALLOW_SEALING);
-  if (elf_fd < 0) {
-    pdie("memfd_create(elf_fd):");
-  }
-
-  // This is technically not an ELF, but it works for the purposes of the test.
-  ssize_t script_len = strlen(argv[2]);
-  if (write(elf_fd, argv[2], script_len) != script_len) {
-    pdie("write(elf_fd):");
-  }
-  if (ftruncate(elf_fd, script_len) == -1) {
-    pdie("ftruncate(elf_fd):");
-  }
-  if (lseek(elf_fd, 0, SEEK_SET) == -1) {
-    pdie("lseek(elf_fd):");
-  }
-  if (fcntl(elf_fd, F_ADD_SEALS,
-            F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) == -1) {
-    pdie("fcntl(elf_fd):");
-  }
+  int elf_fd = open(const_cast<char*>(kShellPath), O_RDONLY | O_CLOEXEC);
+  ASSERT_NE(elf_fd, -1);
 
   int dev_null = open("/dev/null", O_RDONLY);
   ASSERT_NE(dev_null, -1);
@@ -700,18 +680,20 @@ TEST(Test, minijail_run_fd_env_pid_pipes) {
   // relocated.
   minijail_preserve_fd(j.get(), dev_null, elf_fd);
 
-  int child_stderr;
-  mj_run_ret =
+  pid_t pid;
+  int child_stdin, child_stdout, child_stderr;
+  int mj_run_ret =
       minijail_run_fd_env_pid_pipes(j.get(), elf_fd, argv, envp, &pid,
                                     &child_stdin, &child_stdout, &child_stderr);
   EXPECT_EQ(mj_run_ret, 0);
   close(dev_null);
 
-  memset(buf, 0, sizeof(buf));
-  read_ret = read(child_stderr, buf, sizeof(buf) - 1);
+  char buf[kBufferSize] = {};
+  ssize_t read_ret = read(child_stderr, buf, sizeof(buf) - 1);
   EXPECT_GE(read_ret, 0);
   EXPECT_STREQ(buf, "|test\n");
 
+  int status;
   EXPECT_EQ(waitpid(pid, &status, 0), pid);
   ASSERT_TRUE(WIFEXITED(status));
   EXPECT_EQ(WEXITSTATUS(status), 0);
@@ -764,7 +746,7 @@ TEST(Test, minijail_run_env_pid_pipes_with_local_preload) {
   ASSERT_EQ(setenv("TEST_PARENT", "test", 1 /*overwrite*/), 0);
 
   // Use the preload library from this test build.
-  ASSERT_EQ(0, minijail_set_preload_path(j.get(), "./libminijailpreload.so"));
+  set_preload_path(j.get());
 
   int child_stderr;
   mj_run_ret =
@@ -980,7 +962,7 @@ TEST(Test, test_minijail_preserve_fd) {
   status = read(read_pipe[0], buf, 8);
   EXPECT_EQ(status, (int)teststr_len);
   buf[teststr_len] = 0;
-  EXPECT_EQ(strcmp(buf, teststr), 0);
+  EXPECT_STREQ(buf, teststr);
 
   status = minijail_wait(j);
   EXPECT_EQ(status, 0);
@@ -1048,11 +1030,68 @@ TEST(Test, test_minijail_reset_signal_handlers) {
   minijail_destroy(j);
 }
 
+// Test that bind mounting onto a non-existing location works.
+TEST(Test, test_bind_mount_nonexistent_dest) {
+  TemporaryDir dir;
+  ASSERT_TRUE(dir.is_valid());
+
+  // minijail_bind() expects absolute paths, but TemporaryDir::path can return
+  // relative paths on Linux.
+  std::string path = dir.path;
+  if (!is_android()) {
+    std::string cwd(getcwd(NULL, 0));
+    path = cwd + "/" + path;
+  }
+
+  std::string path_src = path + "/src";
+  std::string path_dest = path + "/dest";
+
+  EXPECT_EQ(mkdir(path_src.c_str(), 0700), 0);
+
+  ScopedMinijail j(minijail_new());
+  int bind_res = minijail_bind(j.get(), path_src.c_str(), path_dest.c_str(),
+                               0 /*writable*/);
+  EXPECT_EQ(bind_res, 0);
+}
+
+// Test that bind mounting with a symlink behaves according to build-time
+// configuration.
+TEST(Test, test_bind_mount_symlink) {
+  TemporaryDir dir;
+  ASSERT_TRUE(dir.is_valid());
+
+  // minijail_bind() expects absolute paths, but TemporaryDir::path can return
+  // relative paths on Linux.
+  std::string path = dir.path;
+  if (!is_android()) {
+    std::string cwd(getcwd(NULL, 0));
+    path = cwd + "/" + path;
+  }
+
+  std::string path_src = path + "/src";
+  std::string path_dest = path + "/dest";
+  std::string path_sym = path + "/symlink";
+
+  EXPECT_EQ(mkdir(path_src.c_str(), 0700), 0);
+  EXPECT_EQ(mkdir(path_dest.c_str(), 0700), 0);
+  EXPECT_EQ(symlink(path_src.c_str(), path_sym.c_str()), 0);
+
+  ScopedMinijail j(minijail_new());
+  int bind_res = minijail_bind(j.get(), path_sym.c_str(), path_dest.c_str(),
+                               0 /*writable*/);
+  if (block_symlinks_in_bindmount_paths()) {
+    EXPECT_NE(bind_res, 0);
+  } else {
+    EXPECT_EQ(bind_res, 0);
+  }
+  EXPECT_EQ(unlink(path_sym.c_str()), 0);
+}
+
 namespace {
 
 // Tests that require userns access.
 // Android unit tests don't currently support entering user namespaces as
-// unprivileged users due to having an older kernel.  Chrome OS unit tests
+// unprivileged users due to having an older kernel.  ChromeOS unit tests
 // don't support it either due to being in a chroot environment (see man 2
 // clone for more information about failure modes with the CLONE_NEWUSER flag).
 class NamespaceTest : public ::testing::Test {
@@ -1161,7 +1200,7 @@ TEST_F(NamespaceTest, test_namespaces) {
        {minijail_run_pid_pipes, minijail_run_pid_pipes_no_preload}) {
     for (const auto& test_function : test_functions) {
       ScopedMinijail j(minijail_new());
-      minijail_set_preload_path(j.get(), kPreloadPath);
+      set_preload_path(j.get());
 
       // Enter all the namespaces we can.
       minijail_namespace_cgroups(j.get());
@@ -1197,7 +1236,7 @@ TEST_F(NamespaceTest, test_namespaces) {
       ssize_t read_ret = read(child_stdout, buf, 8);
       EXPECT_EQ(read_ret, static_cast<ssize_t>(teststr_len));
       buf[teststr_len] = 0;
-      EXPECT_EQ(strcmp(buf, teststr), 0);
+      EXPECT_STREQ(buf, teststr);
 
       // Grab the set of namespaces in every container process. They must not
       // match the ones in the init namespace, and they must all match each
@@ -1256,11 +1295,7 @@ TEST_F(NamespaceTest, test_enter_ns) {
       // Finally enter those namespaces.
       j = minijail_new();
 
-      // We need to get the absolute path because entering a new mntns will
-      // implicitly chdir(/) for us.
-      char *path = realpath(kPreloadPath, nullptr);
-      ASSERT_NE(nullptr, path);
-      minijail_set_preload_path(j, path);
+      set_preload_path(j);
 
       minijail_namespace_net(j);
       minijail_namespace_vfs(j);
@@ -1436,6 +1471,367 @@ TEST_F(NamespaceTest, test_remount_one_shared) {
   EXPECT_EQ(status, 0);
 
   minijail_destroy(j);
+}
+
+// Test that using minijail_mount() for bind mounts works.
+TEST_F(NamespaceTest, test_remount_ro_using_mount) {
+  int status;
+  char uidmap[kBufferSize], gidmap[kBufferSize];
+  constexpr uid_t kTargetUid = 1000;  // Any non-zero value will do.
+  constexpr gid_t kTargetGid = 1000;
+
+  if (!userns_supported_)
+    GTEST_SKIP();
+
+  struct minijail *j = minijail_new();
+
+  minijail_namespace_pids(j);
+  minijail_namespace_vfs(j);
+  minijail_mount_tmp(j);
+  minijail_run_as_init(j);
+
+  // Perform userns mapping.
+  minijail_namespace_user(j);
+  snprintf(uidmap, sizeof(uidmap), "%d %d 1", kTargetUid, getuid());
+  snprintf(gidmap, sizeof(gidmap), "%d %d 1", kTargetGid, getgid());
+  minijail_change_uid(j, kTargetUid);
+  minijail_change_gid(j, kTargetGid);
+  minijail_uidmap(j, uidmap);
+  minijail_gidmap(j, gidmap);
+  minijail_namespace_user_disable_setgroups(j);
+
+  // Perform a RO remount using minijail_mount().
+  minijail_mount(j, "none", "/", "none", MS_REMOUNT | MS_BIND | MS_RDONLY);
+
+  char *argv[] = {"/bin/true", nullptr};
+  minijail_run_no_preload(j, argv[0], argv);
+
+  status = minijail_wait(j);
+  EXPECT_EQ(status, 0);
+
+  minijail_destroy(j);
+}
+
+namespace {
+
+// Tests that require Landlock support.
+//
+// These subclass NamespaceTest because they also require  userns access.
+// TODO(akhna): ideally, Landlock unit tests should be able to run w/o
+// namespace_pids or namespace_user.
+class LandlockTest : public NamespaceTest {
+ protected:
+  static void SetUpTestCase() {
+    run_landlock_tests_ = LandlockSupported() && UsernsSupported();
+  }
+
+  // Whether Landlock tests should be run.
+  static bool run_landlock_tests_;
+
+  static bool LandlockSupported() {
+    // Check the Landlock version w/o creating a ruleset file descriptor.
+    int landlock_version = landlock_create_ruleset(
+      NULL, 0, LANDLOCK_CREATE_RULESET_VERSION);
+    if (landlock_version <= 0) {
+      const int err = errno;
+      warn("Skipping Landlock tests");
+      switch (err) {
+      case ENOSYS:
+        warn("Landlock not supported by the current kernel.");
+        break;
+      case EOPNOTSUPP:
+        warn("Landlock is currently disabled.");
+        break;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  // Sets up a minijail to make Landlock syscalls and child processes.
+  void SetupLandlockTestingNamespaces(struct minijail *j) {
+    minijail_namespace_pids(j);
+    minijail_namespace_user(j);
+  }
+};
+
+bool LandlockTest::run_landlock_tests_;
+
+// Constants used in Landlock tests.
+constexpr char kBinPath[] = "/bin";
+constexpr char kEtcPath[] = "/etc";
+constexpr char kLibPath[] = "/lib";
+constexpr char kLib64Path[] = "/lib64";
+constexpr char kTmpPath[] = "/tmp";
+constexpr char kLsPath[] = "/bin/ls";
+constexpr char kTestSymlinkScript[] = R"(
+      unlink  /tmp/test-sym-link-1;
+      ln -s /bin /tmp/test-sym-link-1
+    )";
+
+}  // namespace
+
+TEST_F(LandlockTest, test_rule_rx_allow) {
+  int mj_run_ret;
+  int status;
+  char *argv[3];
+  if (!run_landlock_tests_)
+    GTEST_SKIP();
+  ScopedMinijail j(minijail_new());
+  SetupLandlockTestingNamespaces(j.get());
+  minijail_add_fs_restriction_rx(j.get(), kBinPath);
+  minijail_add_fs_restriction_rx(j.get(), kEtcPath);
+  minijail_add_fs_restriction_rx(j.get(), kLibPath);
+  minijail_add_fs_restriction_rx(j.get(), kLib64Path);
+
+  argv[0] = const_cast<char*>(kLsPath);
+  argv[1] = const_cast<char*>(kCatPath);
+  argv[2] = NULL;
+
+  mj_run_ret = minijail_run_no_preload(j.get(), argv[0], argv);
+  EXPECT_EQ(mj_run_ret, 0);
+  status = minijail_wait(j.get());
+  EXPECT_EQ(status, 0);
+}
+
+TEST_F(LandlockTest, test_rule_rx_deny) {
+  int mj_run_ret;
+  int status;
+  char *argv[3];
+  if (!run_landlock_tests_)
+    GTEST_SKIP();
+  ScopedMinijail j(minijail_new());
+  SetupLandlockTestingNamespaces(j.get());
+  // Add irrelevant Landlock rule.
+  minijail_add_fs_restriction_rx(j.get(), "/var");
+
+  argv[0] = const_cast<char*>(kLsPath);
+  argv[1] = const_cast<char*>(kCatPath);
+  argv[2] = NULL;
+
+  mj_run_ret = minijail_run_no_preload(j.get(), argv[0], argv);
+  EXPECT_EQ(mj_run_ret, 0);
+  status = minijail_wait(j.get());
+  EXPECT_NE(status, 0);
+}
+
+TEST_F(LandlockTest, test_rule_ro_allow) {
+  int mj_run_ret;
+  int status;
+  char *argv[3];
+  if (!run_landlock_tests_)
+    GTEST_SKIP();
+  ScopedMinijail j(minijail_new());
+  SetupLandlockTestingNamespaces(j.get());
+  minijail_add_fs_restriction_rx(j.get(), kBinPath);
+  minijail_add_fs_restriction_rx(j.get(), kEtcPath);
+  minijail_add_fs_restriction_rx(j.get(), kLibPath);
+  minijail_add_fs_restriction_rx(j.get(), kLib64Path);
+  // Add RO rule.
+  minijail_add_fs_restriction_ro(j.get(), "/var");
+
+  argv[0] = const_cast<char*>(kLsPath);
+  argv[1] = "/var";
+  argv[2] = NULL;
+
+  mj_run_ret = minijail_run_no_preload(j.get(), argv[0], argv);
+  EXPECT_EQ(mj_run_ret, 0);
+  status = minijail_wait(j.get());
+  EXPECT_EQ(status, 0);
+}
+
+TEST_F(LandlockTest, test_rule_ro_deny) {
+  int mj_run_ret;
+  int status;
+  char *argv[3];
+  if (!run_landlock_tests_)
+    GTEST_SKIP();
+  ScopedMinijail j(minijail_new());
+  SetupLandlockTestingNamespaces(j.get());
+  minijail_add_fs_restriction_rx(j.get(), kBinPath);
+  minijail_add_fs_restriction_rx(j.get(), kEtcPath);
+  minijail_add_fs_restriction_rx(j.get(), kLibPath);
+  minijail_add_fs_restriction_rx(j.get(), kLib64Path);
+  // No RO rule for /var, because we want the cmd to fail.
+
+  argv[0] = const_cast<char*>(kLsPath);
+  argv[1] = "/var";
+  argv[2] = NULL;
+
+  mj_run_ret = minijail_run_no_preload(j.get(), argv[0], argv);
+  EXPECT_EQ(mj_run_ret, 0);
+  status = minijail_wait(j.get());
+  EXPECT_NE(status, 0);
+}
+
+TEST_F(LandlockTest, test_rule_rw_allow) {
+  int mj_run_ret;
+  int status;
+  char *argv[4];
+  if (!run_landlock_tests_)
+    GTEST_SKIP();
+  ScopedMinijail j(minijail_new());
+  SetupLandlockTestingNamespaces(j.get());
+  minijail_add_fs_restriction_rx(j.get(), kBinPath);
+  minijail_add_fs_restriction_rx(j.get(), kEtcPath);
+  minijail_add_fs_restriction_rx(j.get(), kLibPath);
+  minijail_add_fs_restriction_rx(j.get(), kLib64Path);
+  // Add RW Landlock rule.
+  minijail_add_fs_restriction_rw(j.get(), kTmpPath);
+
+  argv[0] = const_cast<char*>(kShellPath);
+  argv[1] = "-c";
+  argv[2] = "exec echo 'bar' > /tmp/baz";
+  argv[3] = NULL;
+
+  mj_run_ret = minijail_run_no_preload(j.get(), argv[0], argv);
+  EXPECT_EQ(mj_run_ret, 0);
+  status = minijail_wait(j.get());
+  EXPECT_EQ(status, 0);
+}
+
+TEST_F(LandlockTest, test_rule_rw_deny) {
+  int mj_run_ret;
+  int status;
+  char *argv[4];
+  if (!run_landlock_tests_)
+    GTEST_SKIP();
+  ScopedMinijail j(minijail_new());
+  SetupLandlockTestingNamespaces(j.get());
+  minijail_add_fs_restriction_rx(j.get(), kBinPath);
+  minijail_add_fs_restriction_rx(j.get(), kEtcPath);
+  minijail_add_fs_restriction_rx(j.get(), kLibPath);
+  minijail_add_fs_restriction_rx(j.get(), kLib64Path);
+  // No RW rule, because we want the cmd to fail.
+
+  argv[0] = const_cast<char*>(kShellPath);
+  argv[1] = "-c";
+  argv[2] = "exec echo 'bar' > /tmp/baz";
+  argv[3] = NULL;
+
+  mj_run_ret = minijail_run_no_preload(j.get(), argv[0], argv);
+  EXPECT_EQ(mj_run_ret, 0);
+  status = minijail_wait(j.get());
+  EXPECT_NE(status, 0);
+}
+
+TEST_F(LandlockTest, test_rule_allow_symlinks_advanced_rw) {
+  int mj_run_ret;
+  int status;
+  if (!run_landlock_tests_)
+    GTEST_SKIP();
+  ScopedMinijail j(minijail_new());
+  SetupLandlockTestingNamespaces(j.get());
+  minijail_add_fs_restriction_rx(j.get(), kBinPath);
+  minijail_add_fs_restriction_rx(j.get(), kEtcPath);
+  minijail_add_fs_restriction_rx(j.get(), kLibPath);
+  minijail_add_fs_restriction_rx(j.get(), kLib64Path);
+  minijail_add_fs_restriction_advanced_rw(j.get(), kTmpPath);
+
+  char* const argv[] = {"sh", "-c", const_cast<char*>(kTestSymlinkScript),
+      nullptr};
+
+  mj_run_ret = minijail_run_no_preload(j.get(), kShellPath, argv);
+  EXPECT_EQ(mj_run_ret, 0);
+  status = minijail_wait(j.get());
+  EXPECT_EQ(status, 0);
+}
+
+TEST_F(LandlockTest, test_rule_deny_symlinks_basic_rw) {
+  int mj_run_ret;
+  int status;
+  if (!run_landlock_tests_)
+    GTEST_SKIP();
+  ScopedMinijail j(minijail_new());
+  SetupLandlockTestingNamespaces(j.get());
+  minijail_add_fs_restriction_rx(j.get(), kBinPath);
+  minijail_add_fs_restriction_rx(j.get(), kEtcPath);
+  minijail_add_fs_restriction_rx(j.get(), kLibPath);
+  minijail_add_fs_restriction_rx(j.get(), kLib64Path);
+  minijail_add_fs_restriction_rw(j.get(), kTmpPath);
+
+  char* const argv[] = {"sh", "-c", const_cast<char*>(kTestSymlinkScript),
+      nullptr};
+
+  mj_run_ret = minijail_run_no_preload(j.get(), kShellPath, argv);
+  EXPECT_EQ(mj_run_ret, 0);
+  status = minijail_wait(j.get());
+  EXPECT_NE(status, 0);
+}
+
+TEST_F(LandlockTest, test_rule_rx_cannot_write) {
+  int mj_run_ret;
+  int status;
+  char *argv[4];
+  if (!run_landlock_tests_)
+    GTEST_SKIP();
+  ScopedMinijail j(minijail_new());
+  SetupLandlockTestingNamespaces(j.get());
+  minijail_add_fs_restriction_rx(j.get(), kBinPath);
+  minijail_add_fs_restriction_rx(j.get(), kEtcPath);
+  minijail_add_fs_restriction_rx(j.get(), kLibPath);
+  minijail_add_fs_restriction_rx(j.get(), kLib64Path);
+  minijail_add_fs_restriction_rx(j.get(), kTmpPath);
+
+  argv[0] = const_cast<char*>(kShellPath);
+  argv[1] = "-c";
+  argv[2] = "exec echo 'bar' > /tmp/baz";
+  argv[3] = NULL;
+
+  mj_run_ret = minijail_run_no_preload(j.get(), argv[0], argv);
+  EXPECT_EQ(mj_run_ret, 0);
+  status = minijail_wait(j.get());
+  EXPECT_NE(status, 0);
+}
+
+TEST_F(LandlockTest, test_rule_ro_cannot_wx) {
+  int mj_run_ret;
+  int status;
+  char *argv[4];
+  if (!run_landlock_tests_)
+    GTEST_SKIP();
+  ScopedMinijail j(minijail_new());
+  SetupLandlockTestingNamespaces(j.get());
+  minijail_add_fs_restriction_ro(j.get(), kBinPath);
+  minijail_add_fs_restriction_ro(j.get(), kEtcPath);
+  minijail_add_fs_restriction_ro(j.get(), kLibPath);
+  minijail_add_fs_restriction_ro(j.get(), kLib64Path);
+  minijail_add_fs_restriction_ro(j.get(), kTmpPath);
+
+  argv[0] = const_cast<char*>(kShellPath);
+  argv[1] = "-c";
+  argv[2] = "exec echo 'bar' > /tmp/baz";
+  argv[3] = NULL;
+
+  mj_run_ret = minijail_run_no_preload(j.get(), argv[0], argv);
+  EXPECT_EQ(mj_run_ret, 0);
+  status = minijail_wait(j.get());
+  EXPECT_NE(status, 0);
+}
+
+TEST_F(LandlockTest, test_rule_rw_cannot_exec) {
+  int mj_run_ret;
+  int status;
+  char *argv[4];
+  if (!run_landlock_tests_)
+    GTEST_SKIP();
+  ScopedMinijail j(minijail_new());
+  SetupLandlockTestingNamespaces(j.get());
+  minijail_add_fs_restriction_rw(j.get(), kBinPath);
+  minijail_add_fs_restriction_rw(j.get(), kEtcPath);
+  minijail_add_fs_restriction_rw(j.get(), kLibPath);
+  minijail_add_fs_restriction_rw(j.get(), kLib64Path);
+  minijail_add_fs_restriction_rw(j.get(), kTmpPath);
+
+  argv[0] = const_cast<char*>(kShellPath);
+  argv[1] = "-c";
+  argv[2] = "exec echo 'bar' > /tmp/baz";
+  argv[3] = NULL;
+
+  mj_run_ret = minijail_run_no_preload(j.get(), argv[0], argv);
+  EXPECT_EQ(mj_run_ret, 0);
+  status = minijail_wait(j.get());
+  EXPECT_NE(status, 0);
 }
 
 void TestCreateSession(bool create_session) {

@@ -1,4 +1,4 @@
-/* Copyright 2017 The Chromium OS Authors. All rights reserved.
+/* Copyright 2017 The ChromiumOS Authors
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
@@ -167,8 +167,10 @@ unsigned int get_last_valid_cap(void)
 			last_valid_cap--;
 		}
 	} else {
-		const char cap_file[] = "/proc/sys/kernel/cap_last_cap";
+		static const char cap_file[] = "/proc/sys/kernel/cap_last_cap";
 		FILE *fp = fopen(cap_file, "re");
+		if (!fp)
+			pdie("fopen(%s)", cap_file);
 		if (fscanf(fp, "%u", &last_valid_cap) != 1)
 			pdie("fscanf(%s)", cap_file);
 		fclose(fp);
@@ -282,11 +284,30 @@ int mkdir_p(const char *path, mode_t mode, bool isdir)
 }
 
 /*
+ * get_mount_flags: Obtain the mount flags of the mount where |source| lives.
+ */
+int get_mount_flags(const char *source, unsigned long *mnt_flags)
+{
+	if (mnt_flags) {
+		struct statvfs stvfs_buf;
+		int rc = statvfs(source, &stvfs_buf);
+		if (rc) {
+			rc = errno;
+			pwarn("failed to look up mount flags: source=%s",
+			      source);
+			return -rc;
+		}
+		*mnt_flags = stvfs_buf.f_flag;
+	}
+	return 0;
+}
+
+/*
  * setup_mount_destination: Ensures the mount target exists.
  * Creates it if needed and possible.
  */
 int setup_mount_destination(const char *source, const char *dest, uid_t uid,
-			    uid_t gid, bool bind, unsigned long *mnt_flags)
+			    uid_t gid, bool bind)
 {
 	int rc;
 	struct stat st_buf;
@@ -327,20 +348,6 @@ int setup_mount_destination(const char *source, const char *dest, uid_t uid,
 		domkdir = S_ISDIR(st_buf.st_mode) ||
 			  (!bind && (S_ISBLK(st_buf.st_mode) ||
 				     S_ISCHR(st_buf.st_mode)));
-
-		/* If bind mounting, also grab the mount flags of the source. */
-		if (bind && mnt_flags) {
-			struct statvfs stvfs_buf;
-			rc = statvfs(source, &stvfs_buf);
-			if (rc) {
-				rc = errno;
-				pwarn(
-				    "failed to look up mount flags: source=%s",
-				    source);
-				return -rc;
-			}
-			*mnt_flags = stvfs_buf.f_flag;
-		}
 	} else {
 		/* The source is a relative path -- assume it's a pseudo fs. */
 
@@ -365,8 +372,8 @@ int setup_mount_destination(const char *source, const char *dest, uid_t uid,
 	if (rc)
 		return rc;
 	if (!domkdir) {
-		attribute_cleanup_fd int fd = open(
-			dest, O_RDWR | O_CREAT | O_CLOEXEC, 0700);
+		attribute_cleanup_fd int fd =
+		    open(dest, O_RDWR | O_CREAT | O_CLOEXEC, 0700);
 		if (fd < 0) {
 			rc = errno;
 			pwarn("open(%s) failed", dest);
@@ -498,11 +505,10 @@ static bool seccomp_action_is_available(const char *wanted)
 		return false;
 	}
 
-	char *actions_avail = NULL;
+	attribute_cleanup_str char *actions_avail = NULL;
 	size_t buf_size = 0;
 	if (getline(&actions_avail, &buf_size, f) < 0) {
 		pwarn("getline() failed");
-		free(actions_avail);
 		return false;
 	}
 
@@ -512,9 +518,7 @@ static bool seccomp_action_is_available(const char *wanted)
 	 * seccomp actions which include other actions though, so we're good for
 	 * now. Eventually we might want to split the string by spaces.
 	 */
-	bool available = strstr(actions_avail, wanted) != NULL;
-	free(actions_avail);
-	return available;
+	return strstr(actions_avail, wanted) != NULL;
 }
 
 int seccomp_ret_log_available(void)
@@ -538,8 +542,40 @@ int seccomp_ret_kill_process_available(void)
 	return ret_kill_process_available;
 }
 
+bool sys_set_no_new_privs(void)
+{
+	/*
+	 * Set no_new_privs. See </kernel/seccomp.c> and </kernel/sys.c>
+	 * in the kernel source tree for an explanation of the parameters.
+	 */
+	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0) {
+		return true;
+	} else {
+		pwarn("prctl(PR_SET_NO_NEW_PRIVS) failed");
+		return false;
+	}
+}
+
 bool seccomp_filter_flags_available(unsigned int flags)
 {
 	return sys_seccomp(SECCOMP_SET_MODE_FILTER, flags, NULL) != -1 ||
 	       errno != EINVAL;
+}
+
+bool is_canonical_path(const char *path)
+{
+	attribute_cleanup_str char *rp = realpath(path, NULL);
+	if (!rp) {
+		return false;
+	}
+
+	if (streq(path, rp)) {
+		return true;
+	}
+
+	size_t path_len = strlen(path);
+	size_t rp_len = strlen(rp);
+	/* If |path| has a single trailing slash, that's OK. */
+	return path_len == rp_len + 1 && strncmp(path, rp, rp_len) == 0 &&
+	       path[path_len - 1] == '/';
 }

@@ -1,24 +1,33 @@
-From 1cd427ac1bd6df451716e1497cd0cff1932ab63b Mon Sep 17 00:00:00 2001
+From e9ea6a27e14e1a5de12c9755bf63ad6366fcbe22 Mon Sep 17 00:00:00 2001
 From: Adrian Dombeck <adrian.dombeck@code-intelligence.com>
-Date: Fri, 9 Sep 2022 13:57:28 +0200
+Date: Fri, 16 Dec 2022 12:14:28 +0100
 Subject: [PATCH] Link libcap statically
 
 ... to avoid it as a runtime dependency.
 
 This commit contains the changes done by:
 
-    sed -i "s/-lcap/-l:libcap.a/g" third-party/minijail/Makefile
+    sed -i "s/-lcap/-l:libcap.a/g" Makefile
 ---
- Makefile | 16 ++++++++--------
- 1 file changed, 8 insertions(+), 8 deletions(-)
+ Makefile | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
 
 diff --git a/Makefile b/Makefile
-index 86c16c8..d974348 100644
+index 4759736..f505e84 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -77,13 +77,13 @@ tests: TEST(CXX_BINARY(libminijail_unittest)) \
- 	TEST(CXX_BINARY(util_unittest)) \
+@@ -103,7 +103,7 @@ CFLAGS += $(MJ_COMMON_FLAGS)
+ CXXFLAGS += $(MJ_COMMON_FLAGS)
  
+ # Dependencies that all gtest based unittests should have.
+-UNITTEST_LIBS := -lcap
++UNITTEST_LIBS := -l:libcap.a
+ UNITTEST_DEPS := testrunner.o test_util.o
+ 
+ USE_SYSTEM_GTEST ?= no
+@@ -137,13 +137,13 @@ tests: TEST(CXX_BINARY(libminijail_unittest)) \
+ 	TEST(CXX_BINARY(util_unittest)) \
+ 	TEST(CXX_BINARY(config_parser_unittest))
  
 -CC_BINARY(minijail0): LDLIBS += -lcap -ldl
 +CC_BINARY(minijail0): LDLIBS += -l:libcap.a -ldl
@@ -32,16 +41,7 @@ index 86c16c8..d974348 100644
  CC_LIBRARY(libminijail.so): $(CORE_OBJECT_FILES)
  clean: CLEAN(libminijail.so)
  
-@@ -93,7 +93,7 @@ clean: CLEAN(libminijail.*.a)
- 
- CXX_BINARY(libminijail_unittest): CXXFLAGS += -Wno-write-strings \
- 						$(GTEST_CXXFLAGS)
--CXX_BINARY(libminijail_unittest): LDLIBS += -lcap $(GTEST_LIBS)
-+CXX_BINARY(libminijail_unittest): LDLIBS += -l:libcap.a $(GTEST_LIBS)
- ifeq ($(USE_SYSTEM_GTEST),no)
- CXX_BINARY(libminijail_unittest): $(GTEST_LIBS)
- endif
-@@ -104,13 +104,13 @@ clean: CLEAN(libminijail_unittest)
+@@ -164,7 +164,7 @@ clean: CLEAN(libminijail_unittest)
  TEST(CXX_BINARY(libminijail_unittest)): CC_LIBRARY(libminijailpreload.so)
  
  
@@ -50,40 +50,6 @@ index 86c16c8..d974348 100644
  CC_LIBRARY(libminijailpreload.so): libminijailpreload.o $(CORE_OBJECT_FILES)
  clean: CLEAN(libminijailpreload.so)
  
- 
- CXX_BINARY(minijail0_cli_unittest): CXXFLAGS += $(GTEST_CXXFLAGS)
--CXX_BINARY(minijail0_cli_unittest): LDLIBS += -lcap $(GTEST_LIBS)
-+CXX_BINARY(minijail0_cli_unittest): LDLIBS += -l:libcap.a $(GTEST_LIBS)
- ifeq ($(USE_SYSTEM_GTEST),no)
- CXX_BINARY(minijail0_cli_unittest): $(GTEST_LIBS)
- endif
-@@ -121,7 +121,7 @@ clean: CLEAN(minijail0_cli_unittest)
- 
- CXX_BINARY(syscall_filter_unittest): CXXFLAGS += -Wno-write-strings \
- 						$(GTEST_CXXFLAGS)
--CXX_BINARY(syscall_filter_unittest): LDLIBS += -lcap $(GTEST_LIBS)
-+CXX_BINARY(syscall_filter_unittest): LDLIBS += -l:libcap.a $(GTEST_LIBS)
- ifeq ($(USE_SYSTEM_GTEST),no)
- CXX_BINARY(syscall_filter_unittest): $(GTEST_LIBS)
- endif
-@@ -131,7 +131,7 @@ clean: CLEAN(syscall_filter_unittest)
- 
- 
- CXX_BINARY(system_unittest): CXXFLAGS += $(GTEST_CXXFLAGS)
--CXX_BINARY(system_unittest): LDLIBS += -lcap $(GTEST_LIBS)
-+CXX_BINARY(system_unittest): LDLIBS += -l:libcap.a $(GTEST_LIBS)
- ifeq ($(USE_SYSTEM_GTEST),no)
- CXX_BINARY(system_unittest): $(GTEST_LIBS)
- endif
-@@ -141,7 +141,7 @@ clean: CLEAN(system_unittest)
- 
- 
- CXX_BINARY(util_unittest): CXXFLAGS += $(GTEST_CXXFLAGS)
--CXX_BINARY(util_unittest): LDLIBS += -lcap $(GTEST_LIBS)
-+CXX_BINARY(util_unittest): LDLIBS += -l:libcap.a $(GTEST_LIBS)
- ifeq ($(USE_SYSTEM_GTEST),no)
- CXX_BINARY(util_unittest): $(GTEST_LIBS)
- endif
 -- 
-2.37.2
+2.38.1
 

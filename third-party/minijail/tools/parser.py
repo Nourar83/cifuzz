@@ -31,6 +31,12 @@ except ImportError:
     from minijail import bpf
 
 
+# Representations of numbers with different radix (base) in C.
+HEX_REGEX = r'-?0[xX][0-9a-fA-F]+'
+OCTAL_REGEX = r'-?0[0-7]+'
+DECIMAL_REGEX = r'-?[0-9]+'
+
+
 Token = collections.namedtuple(
     'Token', ['type', 'value', 'filename', 'line', 'line_number', 'column'])
 
@@ -44,7 +50,7 @@ _TOKEN_SPECIFICATION = (
     ('FREQUENCY', r'@frequency\b'),
     ('DENYLIST', r'@denylist$'),
     ('PATH', r'(?:\.)?/\S+'),
-    ('NUMERIC_CONSTANT', r'-?0[xX][0-9a-fA-F]+|-?0[Oo][0-7]+|-?[0-9]+'),
+    ('NUMERIC_CONSTANT', f'{HEX_REGEX}|{OCTAL_REGEX}|{DECIMAL_REGEX}'),
     ('COLON', r':'),
     ('SEMICOLON', r';'),
     ('COMMA', r','),
@@ -221,7 +227,8 @@ class PolicyParser:
                  kill_action,
                  include_depth_limit=10,
                  override_default_action=None,
-                 denylist=False):
+                 denylist=False,
+                 ret_log=False):
         self._parser_states = [ParserState("<memory>")]
         self._kill_action = kill_action
         self._include_depth_limit = include_depth_limit
@@ -233,6 +240,7 @@ class PolicyParser:
         self._frequency_mapping = collections.defaultdict(int)
         self._arch = arch
         self._denylist = denylist
+        self._ret_log = ret_log
 
     @property
     def _parser_state(self):
@@ -247,8 +255,21 @@ class PolicyParser:
                 self._parser_state.error('invalid constant', token=token)
             single_constant = self._arch.constants[token.value]
         elif token.type == 'NUMERIC_CONSTANT':
+            # As `int(_, 0)` in Python != `strtol(_, _, 0)` in C, to make sure
+            # the number parsing behaves exactly in C, instead of using `int()`
+            # directly, we list out all the possible formats for octal, decimal
+            # and hex numbers, and determine the corresponding base by regex.
             try:
-                single_constant = int(token.value, base=0)
+                if re.match(HEX_REGEX, token.value):
+                    base = 16
+                elif re.match(OCTAL_REGEX, token.value):
+                    base = 8
+                elif re.match(DECIMAL_REGEX, token.value):
+                    base = 10
+                else:
+                    # This should never happen.
+                    raise ValueError
+                single_constant = int(token.value, base=base)
             except ValueError:
                 self._parser_state.error('invalid constant', token=token)
         else:
@@ -296,7 +317,7 @@ class PolicyParser:
 
         Constants can be:
 
-        - A number that can be parsed with int(..., base=0)
+        - A number that can be parsed with strtol() in C.
         - A named constant expression.
         - A parenthesized, valid constant expression.
         - A valid constant expression prefixed with the unary bitwise
@@ -441,7 +462,11 @@ class PolicyParser:
         elif action_token.type == 'RETURN':
             if not tokens:
                 self._parser_state.error('missing return value')
-            return bpf.ReturnErrno(self._parse_single_constant(tokens.pop(0)))
+            if self._ret_log:
+                tokens.pop(0)
+                return bpf.Log()
+            else:
+                return bpf.ReturnErrno(self._parse_single_constant(tokens.pop(0)))
         return self._parser_state.error('invalid action', token=action_token)
 
     # single-filter = action

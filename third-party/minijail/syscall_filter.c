@@ -1,4 +1,4 @@
-/* Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
+/* Copyright 2012 The ChromiumOS Authors
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
@@ -34,21 +34,21 @@ int seccomp_can_softfail(void)
 
 int str_to_op(const char *op_str)
 {
-	if (!strcmp(op_str, "==")) {
+	if (streq(op_str, "==")) {
 		return EQ;
-	} else if (!strcmp(op_str, "!=")) {
+	} else if (streq(op_str, "!=")) {
 		return NE;
-	} else if (!strcmp(op_str, "<")) {
+	} else if (streq(op_str, "<")) {
 		return LT;
-	} else if (!strcmp(op_str, "<=")) {
+	} else if (streq(op_str, "<=")) {
 		return LE;
-	} else if (!strcmp(op_str, ">")) {
+	} else if (streq(op_str, ">")) {
 		return GT;
-	} else if (!strcmp(op_str, ">=")) {
+	} else if (streq(op_str, ">=")) {
 		return GE;
-	} else if (!strcmp(op_str, "&")) {
+	} else if (streq(op_str, "&")) {
 		return SET;
-	} else if (!strcmp(op_str, "in")) {
+	} else if (streq(op_str, "in")) {
 		return IN;
 	} else {
 		return 0;
@@ -568,49 +568,6 @@ int parse_include_statement(struct parser_state *state, char *policy_line,
 	return 0;
 }
 
-/*
- * This is like getline() but supports line wrapping with \.
- */
-static ssize_t getmultiline(char **lineptr, size_t *n, FILE *stream)
-{
-	ssize_t ret = getline(lineptr, n, stream);
-	if (ret < 0)
-		return ret;
-
-	char *line = *lineptr;
-	/* Eat the newline to make processing below easier. */
-	if (ret > 0 && line[ret - 1] == '\n')
-		line[--ret] = '\0';
-
-	/* If the line doesn't end in a backslash, we're done. */
-	if (ret <= 0 || line[ret - 1] != '\\')
-		return ret;
-
-	/* This line ends in a backslash. Get the nextline. */
-	line[--ret] = '\0';
-	size_t next_n = 0;
-	char *next_line = NULL;
-	ssize_t next_ret = getmultiline(&next_line, &next_n, stream);
-	if (next_ret == -1) {
-		free(next_line);
-		/* We couldn't fully read the line, so return an error. */
-		return -1;
-	}
-
-	/* Merge the lines. */
-	*n = ret + next_ret + 2;
-	line = realloc(line, *n);
-	if (!line) {
-		free(next_line);
-		return -1;
-	}
-	line[ret] = ' ';
-	memcpy(&line[ret + 1], next_line, next_ret + 1);
-	free(next_line);
-	*lineptr = line;
-	return *n - 1;
-}
-
 int compile_file(const char *filename, FILE *policy_file,
 		 struct filter_block *head, struct filter_block **arg_blocks,
 		 struct bpf_labels *labels,
@@ -632,7 +589,7 @@ int compile_file(const char *filename, FILE *policy_file,
 	 * Chain the filter sections together and dump them into
 	 * the final buffer at the end.
 	 */
-	char *line = NULL;
+	attribute_cleanup_str char *line = NULL;
 	size_t len = 0;
 	int ret = 0;
 
@@ -667,7 +624,7 @@ int compile_file(const char *filename, FILE *policy_file,
 				    &state,
 				    "failed to parse include statement");
 				ret = -1;
-				goto free_line;
+				goto out;
 			}
 
 			attribute_cleanup_fp FILE *included_file =
@@ -676,7 +633,7 @@ int compile_file(const char *filename, FILE *policy_file,
 				compiler_pwarn(&state, "fopen('%s') failed",
 					       filename);
 				ret = -1;
-				goto free_line;
+				goto out;
 			}
 			if (compile_file(filename, included_file, head,
 					 arg_blocks, labels, filteropts,
@@ -685,7 +642,7 @@ int compile_file(const char *filename, FILE *policy_file,
 				compiler_warn(&state, "'@include %s' failed",
 					      filename);
 				ret = -1;
-				goto free_line;
+				goto out;
 			}
 			continue;
 		}
@@ -699,14 +656,14 @@ int compile_file(const char *filename, FILE *policy_file,
 			warn("compile_file: malformed policy line, missing "
 			     "':'");
 			ret = -1;
-			goto free_line;
+			goto out;
 		}
 
 		policy_line = strip(policy_line);
 		if (*policy_line == '\0') {
 			compiler_warn(&state, "empty policy line");
 			ret = -1;
-			goto free_line;
+			goto out;
 		}
 
 		syscall_name = strip(syscall_name);
@@ -731,7 +688,7 @@ int compile_file(const char *filename, FILE *policy_file,
 				continue;
 			}
 			ret = -1;
-			goto free_line;
+			goto out;
 		}
 
 		if (!insert_and_check_duplicate_syscall(previous_syscalls,
@@ -748,7 +705,7 @@ int compile_file(const char *filename, FILE *policy_file,
 		 * For each syscall, add either a simple ALLOW,
 		 * or an arg filter block.
 		 */
-		if (strcmp(policy_line, "1") == 0) {
+		if (streq(policy_line, "1")) {
 			/* Add simple ALLOW. */
 			append_allow_syscall(head, nr);
 		} else {
@@ -774,7 +731,7 @@ int compile_file(const char *filename, FILE *policy_file,
 				}
 				warn("could not allocate filter block");
 				ret = -1;
-				goto free_line;
+				goto out;
 			}
 
 			if (*arg_blocks) {
@@ -785,8 +742,8 @@ int compile_file(const char *filename, FILE *policy_file,
 		}
 		/* Reuse |line| in the next getline() call. */
 	}
-	/* getline(3) returned -1. This can mean EOF or the below errors. */
-	if (errno == EINVAL || errno == ENOMEM) {
+	/* getline(3) returned -1. This can mean EOF or an error. */
+	if (!feof(policy_file)) {
 		if (*arg_blocks) {
 			free_block_list(*arg_blocks);
 			*arg_blocks = NULL;
@@ -795,8 +752,7 @@ int compile_file(const char *filename, FILE *policy_file,
 		ret = -1;
 	}
 
-free_line:
-	free(line);
+out:
 	return ret;
 }
 

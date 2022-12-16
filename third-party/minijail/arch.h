@@ -1,5 +1,5 @@
 /* arch.h
- * Copyright 2014 The Chromium OS Authors. All rights reserved.
+ * Copyright 2014 The ChromiumOS Authors
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  *
@@ -62,6 +62,17 @@
 #elif defined(__powerpc__)
 #  define MINIJAIL_ARCH_NR AUDIT_ARCH_PPC
 #  define MINIJAIL_ARCH_NAME "ppc"
+#elif defined(__riscv)
+#  if defined(__riscv_xlen)
+#    if (__riscv_xlen == 64)
+#      define MINIJAIL_ARCH_NR AUDIT_ARCH_RISCV64
+#      define MINIJAIL_ARCH_NAME "riscv64"
+#    else
+#      error "Only 64bit riscv is supported"
+#    endif
+#  else
+#    error "AUDIT_ARCH value unavailable"
+#  endif
 #elif defined(__s390x__)
 #  define MINIJAIL_ARCH_NR AUDIT_ARCH_S390X
 #  define MINIJAIL_ARCH_NAME "s390x"

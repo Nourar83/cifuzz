@@ -1,4 +1,4 @@
-/* Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
+/* Copyright 2012 The ChromiumOS Authors
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
@@ -33,39 +33,47 @@
  * sendto(...)                                     <- important
  * exit_group(0)                                   <- finish!
  */
+const char *const log_syscalls[] = {
 #if defined(__x86_64__)
-#if defined(__ANDROID__)
-const char *log_syscalls[] = {"socket", "connect", "fcntl", "writev"};
-#else
-const char *log_syscalls[] = {"socket", "connect", "sendto", "writev"};
-#endif
+# if defined(__ANDROID__)
+  "socket", "connect", "fcntl", "writev",
+# else
+  "socket", "connect", "sendto", "writev",
+# endif
 #elif defined(__i386__)
-#if defined(__ANDROID__)
-const char *log_syscalls[] = {"socketcall", "writev", "fcntl64",
-			      "clock_gettime"};
-#else
-const char *log_syscalls[] = {"socketcall", "time", "writev"};
-#endif
+# if defined(__ANDROID__)
+  "socketcall", "writev", "fcntl64", "clock_gettime",
+# else
+  "socketcall", "time", "writev",
+# endif
 #elif defined(__arm__)
-#if defined(__ANDROID__)
-const char *log_syscalls[] = {"clock_gettime", "connect", "fcntl64", "socket",
-			      "writev"};
-#else
-const char *log_syscalls[] = {"socket", "connect", "gettimeofday", "send",
-			      "writev"};
-#endif
+# if defined(__ANDROID__)
+  "clock_gettime", "connect", "fcntl64", "socket", "writev",
+# else
+  "socket", "connect", "gettimeofday", "send", "writev",
+# endif
 #elif defined(__aarch64__)
-#if defined(__ANDROID__)
-const char *log_syscalls[] = {"connect", "fcntl", "sendto", "socket", "writev"};
+# if defined(__ANDROID__)
+  "connect", "fcntl", "sendto", "socket", "writev",
+# else
+  "socket", "connect", "send", "writev",
+# endif
+#elif defined(__hppa__) || \
+      defined(__ia64__) || \
+      defined(__mips__) || \
+      defined(__powerpc__) || \
+      defined(__sparc__)
+  "socket", "connect", "send",
+#elif defined(__riscv)
+# if defined(__ANDROID__)
+  "connect", "fcntl", "sendto", "socket", "writev",
+# else
+  "socket", "connect", "sendto",
+# endif
 #else
-const char *log_syscalls[] = {"socket", "connect", "send", "writev"};
+# error "Unsupported platform"
 #endif
-#elif defined(__powerpc__) || defined(__ia64__) || defined(__hppa__) ||        \
-      defined(__sparc__) || defined(__mips__)
-const char *log_syscalls[] = {"socket", "connect", "send"};
-#else
-#error "Unsupported platform"
-#endif
+};
 
 const size_t log_syscalls_len = ARRAY_SIZE(log_syscalls);
 
@@ -158,7 +166,7 @@ int lookup_syscall(const char *name, size_t *ind)
 	size_t ind_tmp = 0;
 	const struct syscall_entry *entry = syscall_table;
 	for (; entry->name && entry->nr >= 0; ++entry) {
-		if (!strcmp(entry->name, name)) {
+		if (streq(entry->name, name)) {
 			if (ind != NULL)
 				*ind = ind_tmp;
 			return entry->nr;
@@ -184,7 +192,7 @@ long int parse_single_constant(char *constant_str, char **endptr)
 	const struct constant_entry *entry = constant_table;
 	long int res = 0;
 	for (; entry->name; ++entry) {
-		if (!strcmp(entry->name, constant_str)) {
+		if (streq(entry->name, constant_str)) {
 			*endptr = constant_str + strlen(constant_str);
 			return entry->value;
 		}
@@ -440,16 +448,26 @@ char *tokenize(char **stringp, const char *delim)
 
 char *path_join(const char *external_path, const char *internal_path)
 {
-	char *path;
-	size_t pathlen;
+	char *path = NULL;
+	return asprintf(&path, "%s/%s", external_path, internal_path) < 0
+		   ? NULL
+		   : path;
+}
 
-	/* One extra char for '/' and one for '\0', hence + 2. */
-	pathlen = strlen(external_path) + strlen(internal_path) + 2;
-	path = malloc(pathlen);
-	if (path)
-		snprintf(path, pathlen, "%s/%s", external_path, internal_path);
-
-	return path;
+bool path_is_parent(const char *parent, const char *child)
+{
+	/*
+	 * -Make sure |child| starts with |parent|.
+	 * -Make sure that if |child| is longer than |parent|, either:
+	 * --the last character in |parent| is a path separator, or
+	 * --the character immediately following |parent| in |child| is a path
+	 *  separator.
+	 */
+	size_t parent_len = strlen(parent);
+	return strncmp(parent, child, parent_len) == 0 &&
+	       (strlen(child) > parent_len ? (parent[parent_len - 1] == '/' ||
+					      child[parent_len] == '/')
+					   : false);
 }
 
 void *consumebytes(size_t length, char **buf, size_t *buflength)
@@ -514,24 +532,46 @@ char **minijail_copy_env(char *const *env)
 	return copy;
 }
 
+/*
+ * Utility function used by minijail_setenv, minijail_unsetenv and
+ * minijail_getenv, returns true if |name| is found, false if not.
+ * If found, |*i| is |name|'s index. If not, |*i| is the length of |envp|.
+ */
+static bool getenv_index(char **envp, const char *name, int *i) {
+	if (!envp || !name || !i)
+		return false;
+
+	size_t name_len = strlen(name);
+	for (*i = 0; envp[*i]; ++(*i)) {
+		/*
+		 * If we find a match the size of |name|, we must check
+		 * that the next character is a '=', indicating that
+		 * the full varname of envp[i] is exactly |name| and
+		 * not just happening to start with |name|.
+		 */
+		if (!strncmp(envp[*i], name, name_len) &&
+		    (envp[*i][name_len] == '=')) {
+			return true;
+		}
+	}
+	/* No match found, |*i| contains the number of elements in |envp|. */
+	return false;
+}
+
 int minijail_setenv(char ***env, const char *name, const char *value,
 		    int overwrite)
 {
 	if (!env || !*env || !name || !*name || !value)
 		return EINVAL;
 
-	size_t name_len = strlen(name);
-
 	char **dest = NULL;
-	size_t env_len = 0;
-	for (char **entry = *env; *entry; ++entry, ++env_len) {
-		if (!dest && strncmp(name, *entry, name_len) == 0 &&
-		    (*entry)[name_len] == '=') {
-			if (!overwrite)
-				return 0;
+	int i;
 
-			dest = entry;
-		}
+	/* Look in env to check if this var name already exists. */
+	if (getenv_index(*env, name, &i)) {
+		if (!overwrite)
+			return 0;
+		dest = &(*env)[i];
 	}
 
 	char *new_entry = NULL;
@@ -544,15 +584,87 @@ int minijail_setenv(char ***env, const char *name, const char *value,
 		return 0;
 	}
 
-	env_len++;
-	char **new_env = realloc(*env, (env_len + 1) * sizeof(char *));
+	/* getenv_index has set |i| to the length of |env|. */
+	++i;
+	char **new_env = realloc(*env, (i + 1) * sizeof(char *));
 	if (!new_env) {
 		free(new_entry);
 		return ENOMEM;
 	}
 
-	new_env[env_len - 1] = new_entry;
-	new_env[env_len] = NULL;
+	new_env[i - 1] = new_entry;
+	new_env[i] = NULL;
 	*env = new_env;
 	return 0;
+}
+
+/*
+ * This is like getline() but supports line wrapping with \.
+ */
+ssize_t getmultiline(char **lineptr, size_t *n, FILE *stream)
+{
+	ssize_t ret = getline(lineptr, n, stream);
+	if (ret < 0)
+		return ret;
+
+	char *line = *lineptr;
+	/* Eat the newline to make processing below easier. */
+	if (ret > 0 && line[ret - 1] == '\n')
+		line[--ret] = '\0';
+
+	/* If the line doesn't end in a backslash, we're done. */
+	if (ret <= 0 || line[ret - 1] != '\\')
+		return ret;
+
+	/* This line ends in a backslash. Get the nextline. */
+	line[--ret] = '\0';
+	size_t next_n = 0;
+	attribute_cleanup_str char *next_line = NULL;
+	ssize_t next_ret = getmultiline(&next_line, &next_n, stream);
+	if (next_ret == -1) {
+		/* We couldn't fully read the line, so return an error. */
+		return -1;
+	}
+
+	/* Merge the lines. */
+	*n = ret + next_ret + 2;
+	line = realloc(line, *n);
+	if (!line)
+		return -1;
+	line[ret] = ' ';
+	memcpy(&line[ret + 1], next_line, next_ret + 1);
+	*lineptr = line;
+	return *n - 1;
+}
+
+char *minijail_getenv(char **envp, const char *name) {
+	if (!envp || !name)
+		return NULL;
+
+	int i;
+	if (!getenv_index(envp, name, &i))
+		return NULL;
+
+	/* Return a ptr to the value after the '='. */
+	return envp[i] + strlen(name) + 1;
+}
+
+bool minijail_unsetenv(char **envp, const char *name)
+{
+	if (!envp || !name)
+		return false;
+
+	int i;
+	if (!getenv_index(envp, name, &i))
+		return false;
+
+	/* We found a match, replace it by the last entry of the array. */
+	int last;
+	for (last = i; envp[last]; ++last)
+		continue;
+	--last;
+	envp[i] = envp[last];
+	envp[last] = NULL;
+
+	return true;
 }

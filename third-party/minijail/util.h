@@ -1,5 +1,5 @@
 /* util.h
- * Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
+ * Copyright 2012 The ChromiumOS Authors
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  *
@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <syslog.h>
 #include <unistd.h>
@@ -104,6 +105,21 @@ static inline void _cleanup_fd(int *fd)
 		close(*fd);
 }
 
+/*
+ * Automatically free a heap allocation when exiting its scope.
+ * Make sure the pointer is always initialized.
+ * Some examples:
+ *   attribute_cleanup_str char *s = strdup(...);
+ *   attribute_cleanup_str char *s = NULL;
+ *   ...
+ *   s = strdup(...);
+ */
+#define attribute_cleanup_str attribute_cleanup(_cleanup_str)
+static inline void _cleanup_str(char **ptr)
+{
+	free(*ptr);
+}
+
 #endif /* __cplusplus */
 
 /* clang-format off */
@@ -125,7 +141,7 @@ static inline void _cleanup_fd(int *fd)
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 /* clang-format on */
 
-extern const char *log_syscalls[];
+extern const char *const log_syscalls[];
 extern const size_t log_syscalls_len;
 
 enum logging_system_t {
@@ -187,7 +203,8 @@ static inline bool running_with_asan(void)
 	return compiled_with_asan() || &__asan_init != 0 || &__hwasan_init != 0;
 }
 
-static inline bool debug_logging_allowed(void) {
+static inline bool debug_logging_allowed(void)
+{
 #if defined(ALLOW_DEBUG_LOGGING)
 	return true;
 #else
@@ -195,8 +212,27 @@ static inline bool debug_logging_allowed(void) {
 #endif
 }
 
-static inline bool seccomp_default_ret_log(void) {
+static inline bool seccomp_default_ret_log(void)
+{
 #if defined(SECCOMP_DEFAULT_RET_LOG)
+	return true;
+#else
+	return false;
+#endif
+}
+
+static inline bool block_symlinks_in_bindmount_paths(void)
+{
+#if defined(BLOCK_SYMLINKS_IN_BINDMOUNT_PATHS)
+	return true;
+#else
+	return false;
+#endif
+}
+
+static inline bool block_symlinks_in_noninit_mountns_tmp(void)
+{
+#if defined(BLOCK_SYMLINKS_IN_NONINIT_MOUNTNS_TMP)
 	return true;
 #else
 	return false;
@@ -218,6 +254,14 @@ int parse_size(size_t *size, const char *sizespec);
 char *strip(char *s);
 
 /*
+ * streq: determine whether two strings are equal.
+ */
+static inline bool streq(const char *s1, const char *s2)
+{
+	return strcmp(s1, s2) == 0;
+}
+
+/*
  * tokenize: locate the next token in @stringp using the @delim
  * @stringp A pointer to the string to scan for tokens
  * @delim   The delimiter to split by
@@ -231,6 +275,13 @@ char *strip(char *s);
 char *tokenize(char **stringp, const char *delim);
 
 char *path_join(const char *external_path, const char *internal_path);
+
+/*
+ * path_is_parent: checks whether @parent is a parent of @child.
+ * Note: this function does not evaluate '.' or '..' nor does it resolve
+ * symlinks.
+ */
+bool path_is_parent(const char *parent, const char *child);
 
 /*
  * consumebytes: consumes @length bytes from a buffer @buf of length @buflength
@@ -257,7 +308,7 @@ char *consumestr(char **buf, size_t *buflength);
  * @fd           The file descriptor to log into. Ignored unless
  *               @logger = LOG_TO_FD.
  * @min_priority The minimum priority to display. Corresponds to syslog's
-                 priority parameter. Ignored unless @logger = LOG_TO_FD.
+ *               priority parameter. Ignored unless @logger = LOG_TO_FD.
  */
 void init_logging(enum logging_system_t logger, int fd, int min_priority);
 
@@ -300,6 +351,45 @@ char **minijail_copy_env(char *const *env);
  */
 int minijail_setenv(char ***env, const char *name, const char *value,
 		    int overwrite);
+
+/*
+ * getmultiline: This is like getline() but supports line wrapping with \.
+ *
+ * @lineptr    Address of a buffer that a mutli-line is stored.
+ * @n          Number of bytes stored in *lineptr.
+ * @stream     Input stream to read from.
+ *
+ * Returns number of bytes read or -1 on failure to read (including EOF).
+ */
+ssize_t getmultiline(char **lineptr, size_t *n, FILE *stream);
+
+/*
+ * minjail_getenv: Get an environment variable from @envp. Semantics match the
+ * standard getenv() function, but this operates on @envp, not the global
+ * environment (usually referred to as `extern char **environ`).
+ *
+ * @env       Address of the environment to read from.
+ * @name      Name of the key to get.
+ *
+ * Returns a pointer to the corresponding environment value. The caller must
+ * take care not to modify the pointed value, as this points directly to memory
+ * pointed to by @envp.
+ * If the environment variable name is not found, returns NULL.
+ */
+char *minijail_getenv(char **env, const char *name);
+
+/*
+ * minjail_unsetenv: Clear the environment variable @name from the @envp array
+ * of pointers to strings that have the KEY=VALUE format. If the operation is
+ * successful, the array will contain one item less than before the call.
+ * Only the first occurence is removed.
+ *
+ * @envp      Address of the environment to clear the variable from.
+ * @name      Name of the variable to clear.
+ *
+ * Returns false and modifies *@envp on success, returns true otherwise.
+ */
+bool minijail_unsetenv(char **envp, const char *name);
 
 #ifdef __cplusplus
 }; /* extern "C" */

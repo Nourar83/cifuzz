@@ -1,4 +1,4 @@
-/* Copyright 2018 The Chromium OS Authors. All rights reserved.
+/* Copyright 2018 The ChromiumOS Authors
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  *
@@ -14,6 +14,7 @@
 #include <gtest/gtest.h>
 
 #include "bpf.h"
+#include "test_util.h"
 #include "util.h"
 
 namespace {
@@ -156,6 +157,42 @@ TEST(environment, copy_and_modify) {
   EXPECT_EQ(0, minijail_setenv(&env, "new2", "8", 1));
   EXPECT_EQ("val1=3\nval2=4\ndup=5\ndup=2\nempty=\nnew1=7\nnew2=8\n",
             dump_env(env));
+
+  EXPECT_EQ(nullptr, minijail_getenv(nullptr, "dup"));
+  EXPECT_EQ(nullptr, minijail_getenv(nullptr, nullptr));
+  EXPECT_EQ(nullptr, minijail_getenv(env, nullptr));
+  EXPECT_EQ(nullptr, minijail_getenv(env, "dup="));
+  EXPECT_EQ(nullptr, minijail_getenv(env, "du"));
+  EXPECT_EQ(std::string("8"), minijail_getenv(env, "new2"));
+  EXPECT_EQ(std::string("3"), minijail_getenv(env, "val1"));
+  EXPECT_EQ(std::string("5"), minijail_getenv(env, "dup"));
+
+  EXPECT_EQ(false, minijail_unsetenv(env, "nonexisting"));
+  EXPECT_EQ("val1=3\nval2=4\ndup=5\ndup=2\nempty=\nnew1=7\nnew2=8\n",
+            dump_env(env));
+  EXPECT_EQ(false, minijail_unsetenv(env, ""));
+  EXPECT_EQ("val1=3\nval2=4\ndup=5\ndup=2\nempty=\nnew1=7\nnew2=8\n",
+            dump_env(env));
+  EXPECT_EQ(false, minijail_unsetenv(env, nullptr));
+  EXPECT_EQ("val1=3\nval2=4\ndup=5\ndup=2\nempty=\nnew1=7\nnew2=8\n",
+            dump_env(env));
+  EXPECT_EQ(false, minijail_unsetenv(nullptr, nullptr));
+  EXPECT_EQ("val1=3\nval2=4\ndup=5\ndup=2\nempty=\nnew1=7\nnew2=8\n",
+            dump_env(env));
+  EXPECT_EQ(false, minijail_unsetenv(nullptr, "nonexisting"));
+  EXPECT_EQ("val1=3\nval2=4\ndup=5\ndup=2\nempty=\nnew1=7\nnew2=8\n",
+            dump_env(env));
+  EXPECT_EQ(false, minijail_unsetenv(env, "val1="));
+  EXPECT_EQ("val1=3\nval2=4\ndup=5\ndup=2\nempty=\nnew1=7\nnew2=8\n",
+            dump_env(env));
+  EXPECT_EQ(true, minijail_unsetenv(env, "val1"));
+  EXPECT_EQ("new2=8\nval2=4\ndup=5\ndup=2\nempty=\nnew1=7\n", dump_env(env));
+  EXPECT_EQ(true, minijail_unsetenv(env, "empty"));
+  EXPECT_EQ("new2=8\nval2=4\ndup=5\ndup=2\nnew1=7\n", dump_env(env));
+  EXPECT_EQ(true, minijail_unsetenv(env, "new2"));
+  EXPECT_EQ("new1=7\nval2=4\ndup=5\ndup=2\n", dump_env(env));
+  EXPECT_EQ(true, minijail_unsetenv(env, "new1"));
+  EXPECT_EQ("dup=2\nval2=4\ndup=5\n", dump_env(env));
 
   minijail_free_env(env);
 }
@@ -357,4 +394,51 @@ TEST(parse_size, complete) {
   ASSERT_EQ(-EINVAL, parse_size(&size, "14.2G"));
   ASSERT_EQ(-EINVAL, parse_size(&size, "-1G"));
   ASSERT_EQ(-EINVAL, parse_size(&size, "; /bin/rm -- "));
+}
+
+TEST(path_join, basic) {
+  char *path = path_join("a", "b");
+  ASSERT_EQ(std::string("a/b"), path);
+  free(path);
+}
+
+TEST(path_is_parent, simple) {
+  EXPECT_TRUE(path_is_parent("/dev", "/dev/rtc"));
+  EXPECT_TRUE(path_is_parent("/dev/", "/dev/rtc"));
+  EXPECT_TRUE(path_is_parent("/sys", "/sys/power"));
+  EXPECT_TRUE(path_is_parent("/sys/power", "/sys/power/something"));
+  EXPECT_TRUE(path_is_parent("/sys", "/sys/sys/power"));
+
+  EXPECT_FALSE(path_is_parent("/dev", ""));
+  EXPECT_FALSE(path_is_parent("/dev", "/sys"));
+  EXPECT_FALSE(path_is_parent("/dev", "dev"));
+  EXPECT_FALSE(path_is_parent("/dev", "/sys/dev"));
+  EXPECT_FALSE(path_is_parent("/dev", "/device"));
+}
+
+TEST(getmultiline, basic) {
+  std::string config =
+           "\n"
+           "mount = none\n"
+           "mount =\\\n"
+           "none\n"
+           "binding = none,/tmp\n"
+           "binding = none,\\\n"
+           "/tmp";
+  FILE *config_file = write_to_pipe(config);
+  ASSERT_NE(config_file, nullptr);
+
+  char *line = NULL;
+  size_t len = 0;
+  ASSERT_EQ(0, getmultiline(&line, &len, config_file));
+  EXPECT_EQ(std::string(line), "");
+  ASSERT_EQ(12, getmultiline(&line, &len, config_file));
+  EXPECT_EQ(std::string(line), "mount = none");
+  ASSERT_EQ(12, getmultiline(&line, &len, config_file));
+  EXPECT_EQ(std::string(line), "mount = none");
+  ASSERT_EQ(19, getmultiline(&line, &len, config_file));
+  EXPECT_EQ(std::string(line), "binding = none,/tmp");
+  ASSERT_EQ(20, getmultiline(&line, &len, config_file));
+  EXPECT_EQ(std::string(line), "binding = none, /tmp");
+  free(line);
 }
