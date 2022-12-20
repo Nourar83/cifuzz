@@ -24,6 +24,7 @@ func UntarFile(source, dest string) error {
 
 // Untar extracts a tar archive to a destination directory
 func Untar(r io.Reader, dest string) error {
+	hardlinks := make(map[string]string)
 	tr := tar.NewReader(r)
 	for {
 		var header *tar.Header
@@ -42,31 +43,42 @@ func Untar(r io.Reader, dest string) error {
 				return errors.WithStack(err)
 			}
 		case tar.TypeReg:
-			err = func() error {
-				filePath := filepath.Join(dest, header.Name)
-				err = os.MkdirAll(filepath.Dir(filePath), 0755)
-				if err != nil {
-					return errors.WithStack(err)
-				}
-				var file *os.File
-				file, err = os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY, os.FileMode(header.Mode))
-				if err != nil {
-					return errors.WithStack(err)
-				}
-				defer file.Close()
-				_, err = io.Copy(file, tr)
-				if err != nil {
-					return errors.WithStack(err)
-				}
-				return nil
-			}()
+			filePath := filepath.Join(dest, header.Name)
+			err = os.MkdirAll(filepath.Dir(filePath), 0755)
 			if err != nil {
-				return err
+				return errors.WithStack(err)
 			}
+			var file *os.File
+			file, err = os.OpenFile(filePath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode))
+			if err != nil {
+				return errors.WithStack(err)
+			}
+			_, err = io.Copy(file, tr)
+			_ = file.Close()
+			if err != nil {
+				return errors.WithStack(err)
+			}
+		case tar.TypeLink:
+			// To be able to create the hard link, the target must
+			// already exist, which is not necessarily the case yet, so
+			// we store the link and target paths and create the hard
+			// links after all other files were extracted
+			targetpath := filepath.Join(dest, header.Linkname)
+			linkpath := filepath.Join(dest, header.Name)
+			hardlinks[linkpath] = targetpath
 		default:
 			return errors.Errorf("unsupported file type: %d", header.Typeflag)
 		}
 	}
+
+	// Create the hard links
+	for linkpath, targetpath := range hardlinks {
+		err := os.Link(targetpath, linkpath)
+		if err != nil {
+			return errors.WithStack(err)
+		}
+	}
+
 	return nil
 }
 

@@ -1,7 +1,10 @@
 package bundler
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -60,17 +63,18 @@ func versionedLibraryRegexp(unversionedBasename string) *regexp.Regexp {
 }
 
 type libfuzzerBundler struct {
-	opts *Opts
+	opts          *Opts
+	archiveWriter *artifact.ArchiveWriter
 }
 
-func newLibfuzzerBundler(opts *Opts) *libfuzzerBundler {
-	return &libfuzzerBundler{opts}
+func newLibfuzzerBundler(opts *Opts, archiveWriter *artifact.ArchiveWriter) *libfuzzerBundler {
+	return &libfuzzerBundler{opts, archiveWriter}
 }
 
-func (b *libfuzzerBundler) bundle() ([]*artifact.Fuzzer, artifact.FileMap, error) {
+func (b *libfuzzerBundler) bundle() ([]*artifact.Fuzzer, error) {
 	err := b.checkDependencies()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// TODO: Do not hardcode these values.
@@ -85,31 +89,21 @@ func (b *libfuzzerBundler) bundle() ([]*artifact.Fuzzer, artifact.FileMap, error
 
 	buildResults, err := b.buildAllVariants()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Add all fuzz test artifacts to the archive. There will be one "Fuzzer" metadata object for each pair of fuzz test
 	// and Builder instance.
 	var fuzzers []*artifact.Fuzzer
-	archiveFileMap := artifact.FileMap{}
 	deduplicatedSystemDeps := make(map[string]struct{})
 	for _, buildResult := range buildResults {
-		fuzzTestFuzzers, fuzzTestArchiveFileMap, systemDeps, err := b.assembleArtifacts(buildResult)
+		fuzzTestFuzzers, systemDeps, err := b.assembleArtifacts(buildResult)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		fuzzers = append(fuzzers, fuzzTestFuzzers...)
 		for _, systemDep := range systemDeps {
 			deduplicatedSystemDeps[systemDep] = struct{}{}
-		}
-		// Produce an error when artifacts for different fuzzers conflict - this should never happen as
-		// assembleArtifacts is expected to add a unique prefix for each fuzz test.
-		for archivePath, absPath := range fuzzTestArchiveFileMap {
-			existingAbsPath, conflict := archiveFileMap[archivePath]
-			if conflict {
-				return nil, nil, errors.Errorf("conflict for archive path %q: %q and %q", archivePath, existingAbsPath, absPath)
-			}
-			archiveFileMap[archivePath] = absPath
 		}
 	}
 
@@ -120,7 +114,7 @@ func (b *libfuzzerBundler) bundle() ([]*artifact.Fuzzer, artifact.FileMap, error
       %s`, b.opts.DockerImage, strings.Join(systemDeps, "\n  "))
 	}
 
-	return fuzzers, archiveFileMap, nil
+	return fuzzers, nil
 }
 
 func (b *libfuzzerBundler) buildAllVariants() ([]*build.Result, error) {
@@ -370,11 +364,9 @@ func (b *libfuzzerBundler) checkDependencies() error {
 //nolint:nonamedreturns
 func (b *libfuzzerBundler) assembleArtifacts(buildResult *build.Result) (
 	fuzzers []*artifact.Fuzzer,
-	archiveFileMap artifact.FileMap,
 	systemDeps []string,
 	err error,
 ) {
-	archiveFileMap = artifact.FileMap{}
 	fuzzTestExecutableAbsPath := buildResult.Executable
 
 	// Add all build artifacts under a subdirectory of the fuzz test base path so that these files don't clash with
@@ -396,7 +388,10 @@ func (b *libfuzzerBundler) assembleArtifacts(buildResult *build.Result) (
 		return
 	}
 	fuzzTestArchivePath := filepath.Join(buildArtifactsPrefix, fuzzTestExecutableRelPath)
-	archiveFileMap[fuzzTestArchivePath] = fuzzTestExecutableAbsPath
+	err = b.archiveWriter.WriteFile(fuzzTestArchivePath, fuzzTestExecutableAbsPath)
+	if err != nil {
+		return
+	}
 
 	// On macOS, debug information is collected in a separate .dSYM file. We bundle it in to get source locations
 	// resolved in stack traces.
@@ -408,7 +403,10 @@ func (b *libfuzzerBundler) assembleArtifacts(buildResult *build.Result) (
 	}
 	if dsymExists {
 		fuzzTestDsymArchivePath := fuzzTestArchivePath + ".dSYM"
-		archiveFileMap[fuzzTestDsymArchivePath] = fuzzTestDsymAbsPath
+		err = b.archiveWriter.WriteDir(fuzzTestDsymArchivePath, fuzzTestDsymAbsPath)
+		if err != nil {
+			return
+		}
 	}
 
 	// Add the runtime dependencies of the fuzz test executable.
@@ -427,7 +425,23 @@ depsLoop:
 				err = errors.WithStack(err)
 				return
 			}
-			archiveFileMap[filepath.Join(buildArtifactsPrefix, buildDirRelPath)] = dep
+
+			var hash string
+			hash, err = sha256sum(dep)
+			if err != nil {
+				return
+			}
+			casPath := filepath.Join("cas", hash[:2], hash[2:], filepath.Base(dep))
+			if !b.archiveWriter.HasFileEntry(casPath) {
+				err = b.archiveWriter.WriteFile(casPath, dep)
+				if err != nil {
+					return
+				}
+			}
+			err = b.archiveWriter.WriteHardLink(casPath, filepath.Join(buildArtifactsPrefix, buildDirRelPath))
+			if err != nil {
+				return
+			}
 			continue
 		}
 
@@ -467,23 +481,29 @@ depsLoop:
 		// libraries are unique. If they aren't, we report a conflict.
 		externalLibrariesPrefix = filepath.Join(fuzzTestPrefix(buildResult), "external_libs")
 		archivePath := filepath.Join(externalLibrariesPrefix, filepath.Base(dep))
-		if conflictingDep, hasConflict := archiveFileMap[archivePath]; hasConflict {
+		if b.archiveWriter.HasFileEntry(archivePath) {
 			err = errors.Errorf(
 				"fuzz test %q has conflicting runtime dependencies: %s and %s",
 				buildResult.Name,
 				dep,
-				conflictingDep,
+				b.archiveWriter.GetSourcePath(archivePath),
 			)
 			return
 		}
-		archiveFileMap[archivePath] = dep
+		err = b.archiveWriter.WriteFile(archivePath, dep)
+		if err != nil {
+			return
+		}
 	}
 
 	// Add dictionary to archive
 	var archiveDict string
 	if b.opts.Dictionary != "" {
 		archiveDict = filepath.Join(fuzzTestPrefix(buildResult), "dict")
-		archiveFileMap[archiveDict] = b.opts.Dictionary
+		err = b.archiveWriter.WriteFile(archiveDict, b.opts.Dictionary)
+		if err != nil {
+			return
+		}
 	}
 
 	// Add seeds from user-specified seed corpus dirs (if any) and the
@@ -501,7 +521,7 @@ depsLoop:
 	if len(seedCorpusDirs) > 0 {
 		archiveSeedsDir = filepath.Join(fuzzTestPrefix(buildResult), "seeds")
 
-		err = prepareSeeds(seedCorpusDirs, archiveSeedsDir, archiveFileMap)
+		err = prepareSeeds(seedCorpusDirs, archiveSeedsDir, b.archiveWriter)
 		if err != nil {
 			return
 		}
@@ -580,4 +600,20 @@ func fuzzTestPrefix(buildResult *build.Result) string {
 
 func isCoverageBuild(sanitizers []string) bool {
 	return len(sanitizers) == 1 && sanitizers[0] == "coverage"
+}
+
+func sha256sum(filename string) (string, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return "", errors.WithStack(err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	_, err = io.Copy(h, f)
+	if err != nil {
+		return "", errors.WithStack(err)
+	}
+
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }

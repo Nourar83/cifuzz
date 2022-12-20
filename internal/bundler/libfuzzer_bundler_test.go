@@ -1,7 +1,9 @@
 package bundler
 
 import (
+	"bufio"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -11,36 +13,26 @@ import (
 
 	"code-intelligence.com/cifuzz/internal/build"
 	"code-intelligence.com/cifuzz/pkg/artifact"
+	"code-intelligence.com/cifuzz/pkg/log"
 	"code-intelligence.com/cifuzz/util/fileutil"
 )
 
 // A library in a system library directory that is not certain to exist in the Docker image.
 const uncommonSystemDepUnix = "/usr/lib/libBLAS.so"
 
-// An external library in a non-system location.
-var externalDep = generateExternalDepPath()
-
-func generateExternalDepPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		panic(err)
-	}
-	return filepath.Join(home, ".conan", "cache", "libfoo.so")
-}
-
 func TestAssembleArtifacts_Fuzzing(t *testing.T) {
-	seedCorpus, err := os.MkdirTemp("", "seed-corpus-*")
+	var err error
+
+	// The project dir path has to be absolute
+	projectDir, err := filepath.Abs(filepath.Join("testdata", "libfuzzer", "project"))
 	require.NoError(t, err)
-	defer fileutil.Cleanup(seedCorpus)
+
+	externalDep, err := filepath.Abs(filepath.Join("testdata", "libfuzzer", "lib", "libexternal.so"))
+	require.NoError(t, err)
+
 	tempDir, err := os.MkdirTemp("", "bundle-*")
 	require.NoError(t, err)
 	defer fileutil.Cleanup(tempDir)
-	err = fileutil.Touch(filepath.Join(seedCorpus, "seed"))
-	require.NoError(t, err)
-
-	// The project dir path has to be absolute, but doesn't have to exist.
-	projectDir, err := filepath.Abs("project")
-	require.NoError(t, err)
 
 	fuzzTest := "some_fuzz_test"
 	buildDir := filepath.Join(projectDir, "build")
@@ -52,27 +44,34 @@ func TestAssembleArtifacts_Fuzzing(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		runtimeDeps = append(runtimeDeps, uncommonSystemDepUnix)
 	}
+
+	bundle, err := os.CreateTemp("", "bundle-archive-")
+	require.NoError(t, err)
+	bufWriter := bufio.NewWriter(bundle)
+	archiveWriter := artifact.NewArchiveWriter(bufWriter)
+
+	b := newLibfuzzerBundler(&Opts{
+		Env:     []string{"FOO=foo"},
+		tempDir: tempDir,
+	}, archiveWriter)
+
+	// Assemble artifacts for fuzzer build results
 	buildResult := &build.Result{
 		Name:        fuzzTest,
-		Executable:  filepath.Join(buildDir, "pkg", fuzzTest),
-		SeedCorpus:  seedCorpus,
+		Executable:  filepath.Join(buildDir, fuzzTest),
+		SeedCorpus:  filepath.Join(projectDir, "seeds"),
 		BuildDir:    buildDir,
 		Sanitizers:  []string{"address"},
 		RuntimeDeps: runtimeDeps,
 		ProjectDir:  projectDir,
 	}
-
-	b := newLibfuzzerBundler(&Opts{
-		Env: []string{"FOO=foo"},
-	})
-	b.opts.tempDir = tempDir
-	fuzzers, archiveFileMap, systemDeps, err := b.assembleArtifacts(buildResult)
+	fuzzers, systemDeps, err := b.assembleArtifacts(buildResult)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(fuzzers))
 	require.Equal(t, artifact.Fuzzer{
 		Target:        "some_fuzz_test",
-		Path:          filepath.Join("libfuzzer", "address", "some_fuzz_test", "bin", "pkg", "some_fuzz_test"),
+		Path:          filepath.Join("libfuzzer", "address", "some_fuzz_test", "bin", "some_fuzz_test"),
 		Engine:        "LIBFUZZER",
 		Sanitizer:     "ADDRESS",
 		ProjectDir:    projectDir,
@@ -81,81 +80,58 @@ func TestAssembleArtifacts_Fuzzing(t *testing.T) {
 		EngineOptions: artifact.EngineOptions{Env: []string{"FOO=foo", "NO_CIFUZZ=1"}},
 	}, *fuzzers[0])
 
-	require.Equal(t, artifact.FileMap{
-		filepath.Join("libfuzzer", "address", "some_fuzz_test", "bin", "pkg", "some_fuzz_test"):             filepath.Join(buildDir, "pkg", "some_fuzz_test"),
-		filepath.Join("libfuzzer", "address", "some_fuzz_test", "bin", "lib", "helper.so"):                  filepath.Join(buildDir, "lib", "helper.so"),
-		filepath.Join("libfuzzer", "address", "some_fuzz_test", "external_libs", "libfoo.so"):               externalDep,
-		filepath.Join("libfuzzer", "address", "some_fuzz_test", "seeds", filepath.Base(seedCorpus)):         seedCorpus,
-		filepath.Join("libfuzzer", "address", "some_fuzz_test", "seeds", filepath.Base(seedCorpus), "seed"): filepath.Join(seedCorpus, "seed"),
-	}, archiveFileMap)
-
 	if runtime.GOOS != "windows" {
 		require.Equal(t, []string{uncommonSystemDepUnix}, systemDeps)
 	}
-}
 
-func TestAssembleArtifacts_Coverage(t *testing.T) {
-	seedCorpus, err := os.MkdirTemp("", "seed-corpus-*")
-	require.NoError(t, err)
-	defer fileutil.Cleanup(seedCorpus)
-	tempDir, err := os.MkdirTemp("", "bundle-*")
-	require.NoError(t, err)
-	defer fileutil.Cleanup(tempDir)
-	err = fileutil.Touch(filepath.Join(seedCorpus, "seed"))
-	require.NoError(t, err)
-
-	// The project dir path has to be absolute, but doesn't have to exist.
-	projectDir, err := filepath.Abs("project")
-	require.NoError(t, err)
-
-	fuzzTest := "some_fuzz_test"
-	buildDir := filepath.Join(projectDir, "build")
-	runtimeDeps := []string{
-		// A library in the project's build directory.
-		filepath.Join(buildDir, "lib", "helper.so"),
-		externalDep,
-	}
-	if runtime.GOOS != "windows" {
-		runtimeDeps = append(runtimeDeps, uncommonSystemDepUnix)
-	}
-	buildResult := &build.Result{
+	// Assemble artifacts for coverage build results
+	buildResult = &build.Result{
 		Name:        fuzzTest,
-		Executable:  filepath.Join(buildDir, "pkg", fuzzTest),
-		SeedCorpus:  seedCorpus,
+		Executable:  filepath.Join(buildDir, fuzzTest),
+		SeedCorpus:  filepath.Join(projectDir, "seeds"),
 		BuildDir:    buildDir,
 		Sanitizers:  []string{"coverage"},
 		RuntimeDeps: runtimeDeps,
 		ProjectDir:  projectDir,
 	}
-
-	b := newLibfuzzerBundler(&Opts{})
-	b.opts.tempDir = tempDir
-	fuzzers, archiveFileMap, systemDeps, err := b.assembleArtifacts(buildResult)
+	fuzzers, systemDeps, err = b.assembleArtifacts(buildResult)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(fuzzers))
 	assert.Equal(t, artifact.Fuzzer{
 		Target:       "some_fuzz_test",
-		Path:         filepath.Join("replayer", "coverage", "some_fuzz_test", "bin", "pkg", "some_fuzz_test"),
+		Path:         filepath.Join("replayer", "coverage", "some_fuzz_test", "bin", "some_fuzz_test"),
 		Engine:       "LLVM_COV",
 		ProjectDir:   projectDir,
 		Seeds:        filepath.Join("replayer", "coverage", "some_fuzz_test", "seeds"),
 		LibraryPaths: []string{filepath.Join("replayer", "coverage", "some_fuzz_test", "external_libs")},
 		EngineOptions: artifact.EngineOptions{
-			Env:   []string{"NO_CIFUZZ=1"},
+			Env:   []string{"FOO=foo", "NO_CIFUZZ=1"},
 			Flags: []string{"-merge=1", "."},
 		},
 	}, *fuzzers[0])
 
-	assert.Equal(t, artifact.FileMap{
-		filepath.Join("replayer", "coverage", "some_fuzz_test", "bin", "pkg", "some_fuzz_test"):             filepath.Join(buildDir, "pkg", "some_fuzz_test"),
-		filepath.Join("replayer", "coverage", "some_fuzz_test", "bin", "lib", "helper.so"):                  filepath.Join(buildDir, "lib", "helper.so"),
-		filepath.Join("replayer", "coverage", "some_fuzz_test", "external_libs", "libfoo.so"):               externalDep,
-		filepath.Join("replayer", "coverage", "some_fuzz_test", "seeds", filepath.Base(seedCorpus)):         seedCorpus,
-		filepath.Join("replayer", "coverage", "some_fuzz_test", "seeds", filepath.Base(seedCorpus), "seed"): filepath.Join(seedCorpus, "seed"),
-	}, archiveFileMap)
+	err = archiveWriter.Close()
+	require.NoError(t, err)
+	err = bufWriter.Flush()
+	require.NoError(t, err)
+	err = bundle.Close()
+	require.NoError(t, err)
 
-	if runtime.GOOS != "windows" {
-		assert.Equal(t, []string{uncommonSystemDepUnix}, systemDeps)
-	}
+	// Unpack archive contents with tar.
+	out, err := os.MkdirTemp("", "bundler-test-*")
+	require.NoError(t, err)
+	cmd := exec.Command("tar", "-xvf", bundle.Name(), "-C", out)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	log.Printf("Command: %v", cmd.String())
+	err = cmd.Run()
+	require.NoError(t, err)
+
+	// Check that the archive has the expected contents
+	expectedContents, err := listFilesRecursively(filepath.Join("testdata", "libfuzzer", "expected-archive-contents"))
+	require.NoError(t, err)
+	actualContents, err := listFilesRecursively(out)
+	require.NoError(t, err)
+	require.Equal(t, expectedContents, actualContents)
 }

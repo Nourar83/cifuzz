@@ -1,6 +1,7 @@
-package artifact_test
+package artifact
 
 import (
+	"bufio"
 	"fmt"
 	"io/fs"
 	"os"
@@ -14,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"code-intelligence.com/cifuzz/pkg/artifact"
+	"code-intelligence.com/cifuzz/pkg/log"
 	"code-intelligence.com/cifuzz/util/fileutil"
 )
 
@@ -23,7 +24,7 @@ func TestWriteArchive(t *testing.T) {
 	require.DirExists(t, testdataDir)
 	dir, err := os.MkdirTemp("", "write-archive-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	t.Cleanup(func() { fileutil.Cleanup(dir) })
 	err = copy.Copy(testdataDir, dir)
 	require.NoError(t, err)
 
@@ -32,17 +33,22 @@ func TestWriteArchive(t *testing.T) {
 	err = os.MkdirAll(filepath.Join(dir, "empty_dir"), 0755)
 	require.NoError(t, err)
 
-	// Walk the testdata dir and add all contents to a fileMap for WriteArchive.
-	fileMap := make(artifact.FileMap)
-	err = artifact.AddDirToFileMap(fileMap, "", dir)
+	// Walk the testdata dir and write all contents to an archive
+	archive, err := os.CreateTemp("", "bundle-*.tar.gz")
+	require.NoError(t, err)
+	t.Cleanup(func() { fileutil.Cleanup(archive.Name()) })
+	writer := bufio.NewWriter(archive)
+	archiveWriter := NewArchiveWriter(writer)
+	err = archiveWriter.WriteDir("", dir)
+	require.NoError(t, err)
+	err = archiveWriter.WriteHardLink(filepath.Join("dir1", "dir2", "test.sh"), filepath.Join("dir1", "hardlink"))
 	require.NoError(t, err)
 
-	archive, err := os.CreateTemp("", "artifact-*.tar.gz")
+	err = archiveWriter.Close()
 	require.NoError(t, err)
-	defer archive.Close()
-	err = artifact.WriteArchive(archive, fileMap)
+	err = writer.Flush()
 	require.NoError(t, err)
-	err = archive.Sync()
+	err = archive.Close()
 	require.NoError(t, err)
 
 	// Unpack archive contents with tar.
@@ -51,6 +57,7 @@ func TestWriteArchive(t *testing.T) {
 	cmd := exec.Command("tar", "-xvf", archive.Name(), "-C", out)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	log.Printf("Command: %v", cmd.String())
 	err = cmd.Run()
 	require.NoError(t, err)
 
@@ -62,6 +69,7 @@ func TestWriteArchive(t *testing.T) {
 		{".", "", false},
 		{"dir1", "", false},
 		{filepath.Join("dir1", "symlink"), "#!/usr/bin/env bash", true},
+		{filepath.Join("dir1", "hardlink"), "#!/usr/bin/env bash", true},
 		{filepath.Join("dir1", "dir2"), "", false},
 		{filepath.Join("dir1", "dir2", "test.sh"), "#!/usr/bin/env bash", true},
 		{filepath.Join("dir1", "dir2", "test.txt"), "foobar", false},

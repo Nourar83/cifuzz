@@ -23,56 +23,60 @@ import (
 const runtimeDepsPath = "runtime_deps"
 
 type jazzerBundler struct {
-	opts *Opts
+	opts          *Opts
+	archiveWriter *artifact.ArchiveWriter
 }
 
-func newJazzerBundler(opts *Opts) *jazzerBundler {
-	return &jazzerBundler{opts}
+func newJazzerBundler(opts *Opts, archiveWriter *artifact.ArchiveWriter) *jazzerBundler {
+	return &jazzerBundler{opts, archiveWriter}
 }
 
-func (b *jazzerBundler) bundle() ([]*artifact.Fuzzer, artifact.FileMap, error) {
+func (b *jazzerBundler) bundle() ([]*artifact.Fuzzer, error) {
 	err := b.checkDependencies()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	buildResults, err := b.runBuild()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	return b.assembleArtifacts(buildResults)
 }
 
-func (b *jazzerBundler) assembleArtifacts(buildResults []*build.Result) ([]*artifact.Fuzzer, artifact.FileMap, error) {
+func (b *jazzerBundler) assembleArtifacts(buildResults []*build.Result) ([]*artifact.Fuzzer, error) {
 	var fuzzers []*artifact.Fuzzer
-
-	// create the filemap for the archive
-	archiveFileMap := artifact.FileMap{}
 
 	var archiveDict string
 	if b.opts.Dictionary != "" {
 		archiveDict = "dict"
-		archiveFileMap[archiveDict] = b.opts.Dictionary
+		err := b.archiveWriter.WriteFile(archiveDict, b.opts.Dictionary)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// Iterate over build results to fill archive file map and create fuzzers
+	// Iterate over build results to fill archive and create fuzzers
 	for _, buildResult := range buildResults {
 		log.Printf("build dir: %s\n", buildResult.BuildDir)
 		// copy seeds for every fuzz test
-		archiveSeedsDir, err := b.copySeeds(buildResult, archiveFileMap)
+		archiveSeedsDir, err := b.copySeeds(buildResult)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
 		// creating a manifest.jar for every fuzz test to configure
 		// jazzer via MANIFEST.MF
 		manifestJar, err := b.createManifestJar(buildResult.Name)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		archiveManifestPath := filepath.Join(buildResult.Name, "manifest.jar")
-		archiveFileMap[archiveManifestPath] = manifestJar
+		err = b.archiveWriter.WriteFile(archiveManifestPath, manifestJar)
+		if err != nil {
+			return nil, err
+		}
 		// making sure the manifest jar is the first entry in the class path
 		runtimePaths := []string{
 			archiveManifestPath,
@@ -86,30 +90,33 @@ func (b *jazzerBundler) assembleArtifacts(buildResults []*build.Result) ([]*arti
 				continue
 			}
 			if err != nil {
-				return nil, nil, errors.WithStack(err)
+				return nil, errors.WithStack(err)
 			}
 
 			if entry.IsDir() {
 				// if the current runtime dep is a directory, add all files to
 				// the archive but add just the directory path to the runtime
 				// paths. Hence, there will be a single entry for the runtime
-				// path but multiple entries for the archive file map.
+				// path but multiple entries in the archive.
 				relPath, err := filepath.Rel(buildResult.ProjectDir, runtimeDep)
 				if err != nil {
-					return nil, nil, errors.WithStack(err)
+					return nil, errors.WithStack(err)
 				}
 				relPath = filepath.Join(runtimeDepsPath, relPath)
 				runtimePaths = append(runtimePaths, relPath)
 
-				err = artifact.AddDirToFileMap(archiveFileMap, relPath, runtimeDep)
+				err = b.archiveWriter.WriteDir(relPath, runtimeDep)
 				if err != nil {
-					return nil, nil, errors.WithStack(err)
+					return nil, err
 				}
 			} else {
 				// if the current runtime dependency is a file we add it to the
-				// file map and add the runtime paths of the metadata
+				// archive and add the runtime paths of the metadata
 				archivePath := filepath.Join(runtimeDepsPath, filepath.Base(runtimeDep))
-				archiveFileMap[archivePath] = runtimeDep
+				err = b.archiveWriter.WriteFile(archivePath, runtimeDep)
+				if err != nil {
+					return nil, err
+				}
 				runtimePaths = append(runtimePaths, archivePath)
 			}
 		}
@@ -130,16 +137,17 @@ func (b *jazzerBundler) assembleArtifacts(buildResults []*build.Result) ([]*arti
 
 		fuzzers = append(fuzzers, fuzzer)
 	}
-	return fuzzers, archiveFileMap, nil
+	return fuzzers, nil
 }
 
-func (b *jazzerBundler) copySeeds(buildResult *build.Result, archiveFileMap artifact.FileMap) (string, error) {
+func (b *jazzerBundler) copySeeds(buildResult *build.Result) (string, error) {
 	// Add seeds from user-specified seed corpus dirs (if any)
 	// to the seeds directory in the archive
+	// TODO: Isn't this missing the seed corpus from the build result?
 	var archiveSeedsDir string
 	if len(b.opts.SeedCorpusDirs) > 0 {
 		archiveSeedsDir = "seeds"
-		err := prepareSeeds(b.opts.SeedCorpusDirs, archiveSeedsDir, archiveFileMap)
+		err := prepareSeeds(b.opts.SeedCorpusDirs, archiveSeedsDir, b.archiveWriter)
 		if err != nil {
 			return "", err
 		}
