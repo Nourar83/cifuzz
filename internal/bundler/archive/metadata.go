@@ -1,4 +1,4 @@
-package artifact
+package archive
 
 import (
 	"github.com/pkg/errors"

@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"code-intelligence.com/cifuzz/internal/build"
-	"code-intelligence.com/cifuzz/pkg/artifact"
+	"code-intelligence.com/cifuzz/internal/bundler/archive"
 	"code-intelligence.com/cifuzz/pkg/log"
 	"code-intelligence.com/cifuzz/util/fileutil"
 )
@@ -48,7 +48,7 @@ func TestAssembleArtifacts_Fuzzing(t *testing.T) {
 	bundle, err := os.CreateTemp("", "bundle-archive-")
 	require.NoError(t, err)
 	bufWriter := bufio.NewWriter(bundle)
-	archiveWriter := artifact.NewArchiveWriter(bufWriter)
+	archiveWriter := archive.NewArchiveWriter(bufWriter)
 
 	b := newLibfuzzerBundler(&Opts{
 		Env:     []string{"FOO=foo"},
@@ -69,7 +69,7 @@ func TestAssembleArtifacts_Fuzzing(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(fuzzers))
-	require.Equal(t, artifact.Fuzzer{
+	require.Equal(t, archive.Fuzzer{
 		Target:        "some_fuzz_test",
 		Path:          filepath.Join("libfuzzer", "address", "some_fuzz_test", "bin", "some_fuzz_test"),
 		Engine:        "LIBFUZZER",
@@ -77,7 +77,7 @@ func TestAssembleArtifacts_Fuzzing(t *testing.T) {
 		ProjectDir:    projectDir,
 		Seeds:         filepath.Join("libfuzzer", "address", "some_fuzz_test", "seeds"),
 		LibraryPaths:  []string{filepath.Join("libfuzzer", "address", "some_fuzz_test", "external_libs")},
-		EngineOptions: artifact.EngineOptions{Env: []string{"FOO=foo", "NO_CIFUZZ=1"}},
+		EngineOptions: archive.EngineOptions{Env: []string{"FOO=foo", "NO_CIFUZZ=1"}},
 	}, *fuzzers[0])
 
 	if runtime.GOOS != "windows" {
@@ -98,14 +98,14 @@ func TestAssembleArtifacts_Fuzzing(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, 1, len(fuzzers))
-	assert.Equal(t, artifact.Fuzzer{
+	assert.Equal(t, archive.Fuzzer{
 		Target:       "some_fuzz_test",
 		Path:         filepath.Join("replayer", "coverage", "some_fuzz_test", "bin", "some_fuzz_test"),
 		Engine:       "LLVM_COV",
 		ProjectDir:   projectDir,
 		Seeds:        filepath.Join("replayer", "coverage", "some_fuzz_test", "seeds"),
 		LibraryPaths: []string{filepath.Join("replayer", "coverage", "some_fuzz_test", "external_libs")},
-		EngineOptions: artifact.EngineOptions{
+		EngineOptions: archive.EngineOptions{
 			Env:   []string{"FOO=foo", "NO_CIFUZZ=1"},
 			Flags: []string{"-merge=1", "."},
 		},

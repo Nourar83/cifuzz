@@ -8,8 +8,8 @@ import (
 
 	"github.com/pkg/errors"
 
+	"code-intelligence.com/cifuzz/internal/bundler/archive"
 	"code-intelligence.com/cifuzz/internal/config"
-	"code-intelligence.com/cifuzz/pkg/artifact"
 	"code-intelligence.com/cifuzz/pkg/log"
 	"code-intelligence.com/cifuzz/pkg/vcs"
 	"code-intelligence.com/cifuzz/util/fileutil"
@@ -51,9 +51,9 @@ func (b *Bundler) Bundle() error {
 		return errors.Wrap(err, "failed to create fuzzing artifact archive")
 	}
 	bufWriter := bufio.NewWriter(bundle)
-	archiveWriter := artifact.NewArchiveWriter(bufWriter)
+	archiveWriter := archive.NewArchiveWriter(bufWriter)
 
-	var fuzzers []*artifact.Fuzzer
+	var fuzzers []*archive.Fuzzer
 
 	switch b.opts.BuildSystem {
 	case config.BuildSystemCMake, config.BuildSystemBazel, config.BuildSystemOther:
@@ -66,9 +66,9 @@ func (b *Bundler) Bundle() error {
 	}
 
 	// Create and add the top-level metadata file.
-	metadata := &artifact.Metadata{
+	metadata := &archive.Metadata{
 		Fuzzers: fuzzers,
-		RunEnvironment: &artifact.RunEnvironment{
+		RunEnvironment: &archive.RunEnvironment{
 			Docker: b.opts.DockerImage,
 		},
 		CodeRevision: b.getCodeRevision(),
@@ -77,12 +77,12 @@ func (b *Bundler) Bundle() error {
 	if err != nil {
 		return err
 	}
-	metadataYamlPath := filepath.Join(b.opts.tempDir, artifact.MetadataFileName)
+	metadataYamlPath := filepath.Join(b.opts.tempDir, archive.MetadataFileName)
 	err = os.WriteFile(metadataYamlPath, metadataYamlContent, 0644)
 	if err != nil {
-		return errors.Wrapf(err, "failed to write %s", artifact.MetadataFileName)
+		return errors.Wrapf(err, "failed to write %s", archive.MetadataFileName)
 	}
-	err = archiveWriter.WriteFile(artifact.MetadataFileName, metadataYamlPath)
+	err = archiveWriter.WriteFile(archive.MetadataFileName, metadataYamlPath)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func (b *Bundler) Bundle() error {
 	return nil
 }
 
-func (b *Bundler) getCodeRevision() *artifact.CodeRevision {
+func (b *Bundler) getCodeRevision() *archive.CodeRevision {
 	var err error
 	var gitCommit string
 	var gitBranch string
@@ -145,15 +145,15 @@ func (b *Bundler) getCodeRevision() *artifact.CodeRevision {
 		log.Warnf("The Git repository has uncommitted changes. Archive metadata may be inaccurate.")
 	}
 
-	return &artifact.CodeRevision{
-		Git: &artifact.GitRevision{
+	return &archive.CodeRevision{
+		Git: &archive.GitRevision{
 			Commit: gitCommit,
 			Branch: gitBranch,
 		},
 	}
 }
 
-func prepareSeeds(seedCorpusDirs []string, archiveSeedsDir string, archiveWriter *artifact.ArchiveWriter) error {
+func prepareSeeds(seedCorpusDirs []string, archiveSeedsDir string, archiveWriter *archive.ArchiveWriter) error {
 	var targetDirs []string
 	for _, sourceDir := range seedCorpusDirs {
 		// Put the seeds into subdirectories of the "seeds" directory

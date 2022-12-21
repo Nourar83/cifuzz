@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"code-intelligence.com/cifuzz/internal/build"
-	"code-intelligence.com/cifuzz/pkg/artifact"
+	"code-intelligence.com/cifuzz/internal/bundler/archive"
 	"code-intelligence.com/cifuzz/pkg/log"
 	"code-intelligence.com/cifuzz/util/fileutil"
 )
@@ -55,7 +55,7 @@ func TestAssembleArtifactsJava_Fuzzing(t *testing.T) {
 	bundle, err := os.CreateTemp("", "bundle-archive-")
 	require.NoError(t, err)
 	bufWriter := bufio.NewWriter(bundle)
-	archiveWriter := artifact.NewArchiveWriter(bufWriter)
+	archiveWriter := archive.NewArchiveWriter(bufWriter)
 
 	b := newJazzerBundler(&Opts{
 		Env:     []string{"FOO=foo"},
@@ -78,12 +78,12 @@ func TestAssembleArtifactsJava_Fuzzing(t *testing.T) {
 		filepath.Join("runtime_deps", "classes"),
 		filepath.Join("runtime_deps", "test-classes"),
 	}
-	expectedFuzzer := &artifact.Fuzzer{
+	expectedFuzzer := &archive.Fuzzer{
 		Name:         buildResult.Name,
 		Engine:       "JAVA_LIBFUZZER",
 		ProjectDir:   buildResult.ProjectDir,
 		RuntimePaths: expectedDeps,
-		EngineOptions: artifact.EngineOptions{
+		EngineOptions: archive.EngineOptions{
 			Env:   b.opts.Env,
 			Flags: b.opts.EngineArgs,
 		},

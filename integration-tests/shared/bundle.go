@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
-	"code-intelligence.com/cifuzz/pkg/artifact"
+	"code-intelligence.com/cifuzz/internal/bundler/archive"
 	"code-intelligence.com/cifuzz/util/archiveutil"
 	"code-intelligence.com/cifuzz/util/envutil"
 	"code-intelligence.com/cifuzz/util/executil"
@@ -82,8 +82,8 @@ func TestBundleLibFuzzer(t *testing.T, dir string, cifuzz string, args ...string
 	// Verify the metadata contains the env vars
 	require.Equal(t, []string{"FOO=foo", "BAR=bar", "NO_CIFUZZ=1"}, metadata.Fuzzers[0].EngineOptions.Env)
 
-	var fuzzerMetadata *artifact.Fuzzer
-	var coverageMetadata *artifact.Fuzzer
+	var fuzzerMetadata *archive.Fuzzer
+	var coverageMetadata *archive.Fuzzer
 	for _, fuzzer := range metadata.Fuzzers {
 		if fuzzer.Engine == "LIBFUZZER" {
 			fuzzerMetadata = fuzzer
@@ -364,7 +364,7 @@ func TestBundleGradle(t *testing.T, dir string, cifuzz string, args ...string) {
 	assert.Equal(t, "Jazzer-Fuzz-Target-Class: com.example.FuzzTestCase\n", string(content))
 }
 
-func TestRunBundle(t *testing.T, dir string, cifuzz string, bundlePath string, args ...string) (*artifact.Metadata, string) {
+func TestRunBundle(t *testing.T, dir string, cifuzz string, bundlePath string, args ...string) (*archive.Metadata, string) {
 	// Bundle all fuzz tests into an archive.
 	cmd := executil.Command(cifuzz, args...)
 	cmd.Dir = dir
@@ -387,7 +387,7 @@ func TestRunBundle(t *testing.T, dir string, cifuzz string, bundlePath string, a
 	archiveDir, err := os.MkdirTemp("", "cifuzz-extracted-archive-*")
 	require.NoError(t, err)
 	t.Cleanup(func() { fileutil.Cleanup(archiveDir) })
-	err = artifact.ExtractArchiveForTestsOnly(bundlePath, archiveDir)
+	err = archive.ExtractArchiveForTestsOnly(bundlePath, archiveDir)
 	require.NoError(t, err)
 
 	// List the files in the archive for easier debugging
@@ -415,7 +415,7 @@ func TestRunBundle(t *testing.T, dir string, cifuzz string, bundlePath string, a
 	metadataYaml, err := os.ReadFile(metadataPath)
 	require.NoError(t, err)
 
-	metadata := &artifact.Metadata{}
+	metadata := &archive.Metadata{}
 	err = yaml.Unmarshal(metadataYaml, metadata)
 	require.NoError(t, err)
 

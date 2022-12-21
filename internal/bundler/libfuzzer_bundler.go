@@ -20,9 +20,9 @@ import (
 	"code-intelligence.com/cifuzz/internal/build/bazel"
 	"code-intelligence.com/cifuzz/internal/build/cmake"
 	"code-intelligence.com/cifuzz/internal/build/other"
+	"code-intelligence.com/cifuzz/internal/bundler/archive"
 	"code-intelligence.com/cifuzz/internal/cmdutils"
 	"code-intelligence.com/cifuzz/internal/config"
-	"code-intelligence.com/cifuzz/pkg/artifact"
 	"code-intelligence.com/cifuzz/pkg/dependencies"
 	"code-intelligence.com/cifuzz/pkg/log"
 	"code-intelligence.com/cifuzz/util/envutil"
@@ -64,14 +64,14 @@ func versionedLibraryRegexp(unversionedBasename string) *regexp.Regexp {
 
 type libfuzzerBundler struct {
 	opts          *Opts
-	archiveWriter *artifact.ArchiveWriter
+	archiveWriter *archive.ArchiveWriter
 }
 
-func newLibfuzzerBundler(opts *Opts, archiveWriter *artifact.ArchiveWriter) *libfuzzerBundler {
+func newLibfuzzerBundler(opts *Opts, archiveWriter *archive.ArchiveWriter) *libfuzzerBundler {
 	return &libfuzzerBundler{opts, archiveWriter}
 }
 
-func (b *libfuzzerBundler) bundle() ([]*artifact.Fuzzer, error) {
+func (b *libfuzzerBundler) bundle() ([]*archive.Fuzzer, error) {
 	err := b.checkDependencies()
 	if err != nil {
 		return nil, err
@@ -94,7 +94,7 @@ func (b *libfuzzerBundler) bundle() ([]*artifact.Fuzzer, error) {
 
 	// Add all fuzz test artifacts to the archive. There will be one "Fuzzer" metadata object for each pair of fuzz test
 	// and Builder instance.
-	var fuzzers []*artifact.Fuzzer
+	var fuzzers []*archive.Fuzzer
 	deduplicatedSystemDeps := make(map[string]struct{})
 	for _, buildResult := range buildResults {
 		fuzzTestFuzzers, systemDeps, err := b.assembleArtifacts(buildResult)
@@ -363,7 +363,7 @@ func (b *libfuzzerBundler) checkDependencies() error {
 
 //nolint:nonamedreturns
 func (b *libfuzzerBundler) assembleArtifacts(buildResult *build.Result) (
-	fuzzers []*artifact.Fuzzer,
+	fuzzers []*archive.Fuzzer,
 	systemDeps []string,
 	err error,
 ) {
@@ -534,13 +534,13 @@ depsLoop:
 		return
 	}
 
-	baseFuzzerInfo := artifact.Fuzzer{
+	baseFuzzerInfo := archive.Fuzzer{
 		Target:     buildResult.Name,
 		Path:       fuzzTestArchivePath,
 		ProjectDir: buildResult.ProjectDir,
 		Dictionary: archiveDict,
 		Seeds:      archiveSeedsDir,
-		EngineOptions: artifact.EngineOptions{
+		EngineOptions: archive.EngineOptions{
 			Env:   env,
 			Flags: b.opts.EngineArgs,
 		},
@@ -560,7 +560,7 @@ depsLoop:
 		// Since most libFuzzer options are not useful or potentially disruptive for coverage runs, we do not include
 		// flags passed in via `--engine_args`.
 		fuzzer.EngineOptions.Flags = []string{"-merge=1", "."}
-		fuzzers = []*artifact.Fuzzer{&fuzzer}
+		fuzzers = []*archive.Fuzzer{&fuzzer}
 		// Coverage builds are separate from sanitizer builds, so we don't have any other fuzzers to add.
 		return
 	}

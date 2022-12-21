@@ -11,9 +11,9 @@ import (
 	"code-intelligence.com/cifuzz/internal/build"
 	"code-intelligence.com/cifuzz/internal/build/gradle"
 	"code-intelligence.com/cifuzz/internal/build/maven"
+	"code-intelligence.com/cifuzz/internal/bundler/archive"
 	"code-intelligence.com/cifuzz/internal/cmdutils"
 	"code-intelligence.com/cifuzz/internal/config"
-	"code-intelligence.com/cifuzz/pkg/artifact"
 	"code-intelligence.com/cifuzz/pkg/dependencies"
 	"code-intelligence.com/cifuzz/pkg/java"
 	"code-intelligence.com/cifuzz/pkg/log"
@@ -24,14 +24,14 @@ const runtimeDepsPath = "runtime_deps"
 
 type jazzerBundler struct {
 	opts          *Opts
-	archiveWriter *artifact.ArchiveWriter
+	archiveWriter *archive.ArchiveWriter
 }
 
-func newJazzerBundler(opts *Opts, archiveWriter *artifact.ArchiveWriter) *jazzerBundler {
+func newJazzerBundler(opts *Opts, archiveWriter *archive.ArchiveWriter) *jazzerBundler {
 	return &jazzerBundler{opts, archiveWriter}
 }
 
-func (b *jazzerBundler) bundle() ([]*artifact.Fuzzer, error) {
+func (b *jazzerBundler) bundle() ([]*archive.Fuzzer, error) {
 	err := b.checkDependencies()
 	if err != nil {
 		return nil, err
@@ -45,8 +45,8 @@ func (b *jazzerBundler) bundle() ([]*artifact.Fuzzer, error) {
 	return b.assembleArtifacts(buildResults)
 }
 
-func (b *jazzerBundler) assembleArtifacts(buildResults []*build.Result) ([]*artifact.Fuzzer, error) {
-	var fuzzers []*artifact.Fuzzer
+func (b *jazzerBundler) assembleArtifacts(buildResults []*build.Result) ([]*archive.Fuzzer, error) {
+	var fuzzers []*archive.Fuzzer
 
 	var archiveDict string
 	if b.opts.Dictionary != "" {
@@ -121,14 +121,14 @@ func (b *jazzerBundler) assembleArtifacts(buildResults []*build.Result) ([]*arti
 			}
 		}
 
-		fuzzer := &artifact.Fuzzer{
+		fuzzer := &archive.Fuzzer{
 			Name:         buildResult.Name,
 			Engine:       "JAVA_LIBFUZZER",
 			ProjectDir:   buildResult.ProjectDir,
 			Dictionary:   archiveDict,
 			Seeds:        archiveSeedsDir,
 			RuntimePaths: runtimePaths,
-			EngineOptions: artifact.EngineOptions{
+			EngineOptions: archive.EngineOptions{
 				Env:   b.opts.Env,
 				Flags: b.opts.EngineArgs,
 			},
