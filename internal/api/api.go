@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
+	"golang.org/x/net/proxy"
 
 	"code-intelligence.com/cifuzz/internal/cmd/remote-run/progress"
 	"code-intelligence.com/cifuzz/internal/cmdutils"
@@ -150,7 +152,7 @@ func (client *APIClient) UploadBundle(path string, projectName string, token str
 		req.Header.Set("Content-Type", m.FormDataContentType())
 		req.Header.Add("Authorization", "Bearer "+token)
 
-		httpClient := &http.Client{}
+		httpClient := &http.Client{Transport: GetCustTransportLayer()}
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			return errors.WithStack(err)
@@ -229,7 +231,7 @@ func (client *APIClient) sendRequest(method, endpoint, token string) (*http.Resp
 	}
 	req.Header.Add("Authorization", "Bearer "+token)
 
-	httpClient := &http.Client{}
+	httpClient := &http.Client{Transport: GetCustTransportLayer()}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -300,4 +302,12 @@ func ValidateURL(s string) error {
 		return errors.Errorf("unsupported protocol scheme %q", u.Scheme)
 	}
 	return nil
+}
+
+func GetCustTransportLayer() *http.Transport {
+	dialer := proxy.FromEnvironment()
+	dialContext := func(ctx context.Context, network, address string) (net.Conn, error) {
+		return dialer.Dial(network, address)
+	}
+	return &http.Transport{DialContext: dialContext, DisableKeepAlives: true}
 }

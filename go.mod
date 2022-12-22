@@ -20,7 +20,7 @@ require (
 	github.com/spf13/cobra v1.6.1
 	github.com/spf13/viper v1.14.0
 	golang.org/x/sync v0.1.0
-	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211
+	golang.org/x/term v0.3.0
 )
 
 // TODO: Revert when https://github.com/otiai10/copy/pull/94 is merged
@@ -45,6 +45,7 @@ require (
 	github.com/stretchr/objx v0.5.0 // indirect
 	github.com/tadvi/systray v0.0.0-20190226123456-11a2b8fa57af // indirect
 	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
+	golang.org/x/net v0.4.0 // indirect
 )
 
 require (
@@ -62,7 +63,7 @@ require (
 	github.com/stretchr/testify v1.8.1
 	github.com/subosito/gotenv v1.4.1 // indirect
 	golang.org/x/exp v0.0.0-20220414153411-bcd21879b8fd
-	golang.org/x/sys v0.0.0-20220915200043-7b5979e65e41
+	golang.org/x/sys v0.3.0
 	golang.org/x/text v0.5.0
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
