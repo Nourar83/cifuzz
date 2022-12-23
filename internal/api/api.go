@@ -14,9 +14,9 @@ import (
 	"syscall"
 
 	"github.com/pkg/errors"
+	"golang.org/x/net/proxy"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
-	"golang.org/x/net/proxy"
 
 	"code-intelligence.com/cifuzz/internal/cmd/remote-run/progress"
 	"code-intelligence.com/cifuzz/internal/cmdutils"
