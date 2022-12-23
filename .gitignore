@@ -4,12 +4,12 @@
 
 /build/
 /site/
-tmp/
-bin/
-lib/
-scratch/
-tools/install/bundler/embed/bundle
-.installer-lock
+/tmp/
+/bin/
+/lib/
+/scratch/
+/tools/install/bundler/embed/bundle
+/.installer-lock
 
 coverage.out
 *.coverage.html
