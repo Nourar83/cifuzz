@@ -19,6 +19,7 @@ require (
 	github.com/pterm/pterm v0.12.51-0.20221221034244-22f4f9645a9f
 	github.com/spf13/cobra v1.6.1
 	github.com/spf13/viper v1.14.0
+	golang.org/x/net v0.4.0
 	golang.org/x/sync v0.1.0
 	golang.org/x/term v0.3.0
 )
@@ -45,7 +46,6 @@ require (
 	github.com/stretchr/objx v0.5.0 // indirect
 	github.com/tadvi/systray v0.0.0-20190226123456-11a2b8fa57af // indirect
 	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
-	golang.org/x/net v0.4.0 // indirect
 )
 
 require (
