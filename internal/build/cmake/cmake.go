@@ -313,6 +313,7 @@ func (b *Builder) getRuntimeDeps(fuzzTest string) ([]string, error) {
 		"--config", cmakeBuildConfiguration,
 		"--component", "cifuzz_internal_deps_"+fuzzTest,
 	)
+	log.Debugf("Command: %s", cmd.String())
 	stdout, err := cmd.Output()
 	if err != nil {
 		// It's expected that cmake might fail due to user configuration,
