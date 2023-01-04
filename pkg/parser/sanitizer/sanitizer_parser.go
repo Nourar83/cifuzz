@@ -14,19 +14,22 @@ var (
 	runtimeErrorStartPattern = regexp.MustCompile(
 		`\S+ runtime error: (?P<error_type>[^:]+)`,
 	)
+	fatalErrorPattern = regexp.MustCompile(
+		`==\d+==.*Sanitizer.*fatal error\.`,
+	)
 )
 
 func ParseAsFinding(line string) *finding.Finding {
-	finding := parseAsRuntimeReport(line)
-	if finding != nil {
-		return finding
+	parsers := []func(string) *finding.Finding{
+		parseAsRuntimeReport,
+		parseAsErrorReport,
+		parseAsFatalErrorReport,
 	}
-
-	finding = parseAsErrorReport(line)
-	if finding != nil {
-		return finding
+	for _, parser := range parsers {
+		if f := parser(line); f != nil {
+			return f
+		}
 	}
-
 	return nil
 }
 
@@ -37,6 +40,18 @@ func parseAsErrorReport(log string) *finding.Finding {
 			Type:    finding.ErrorType_CRASH, // aka Vulnerability
 			Details: result["error_type"],
 			Logs:    []string{log},
+		}
+	}
+
+	return nil
+}
+
+func parseAsFatalErrorReport(log string) *finding.Finding {
+	found := fatalErrorPattern.MatchString(log)
+	if found {
+		return &finding.Finding{
+			Type: finding.ErrorType_CRASH,
+			Logs: []string{log},
 		}
 	}
 
