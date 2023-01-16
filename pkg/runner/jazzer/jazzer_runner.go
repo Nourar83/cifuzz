@@ -25,11 +25,11 @@ var customHooks = []string{
 }
 
 type RunnerOptions struct {
-	LibfuzzerOptions              *libfuzzer.RunnerOptions
-	AutofuzzTarget                string
-	TargetClass                   string
-	ClassPaths                    []string
-	InstrumentationPackageFilters []string
+	LibfuzzerOptions        *libfuzzer.RunnerOptions
+	AutofuzzTarget          string
+	TargetClass             string
+	ClassPaths              []string
+	InstrumentationExcludes []string
 }
 
 func (options *RunnerOptions) ValidateOptions() error {
@@ -90,6 +90,13 @@ func (r *Runner) Run(ctx context.Context) error {
 	} else {
 		args = append(args, "--target_class="+r.TargetClass)
 	}
+
+	if len(r.InstrumentationExcludes) > 0 {
+		// Exclude specific classes from being instrumented for fuzzing
+		excludes := strings.Join(r.InstrumentationExcludes, string(os.PathListSeparator))
+		args = append(args, "--instrumentation_excludes="+excludes)
+	}
+
 	// -------------------------
 	// --- libfuzzer options ---
 	// -------------------------

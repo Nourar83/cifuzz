@@ -551,10 +551,12 @@ func (c *runCmd) runFuzzTest(buildResult *build.Result) error {
 	case config.BuildSystemCMake, config.BuildSystemBazel, config.BuildSystemOther:
 		runner = libfuzzer.NewRunner(runnerOpts)
 	case config.BuildSystemMaven, config.BuildSystemGradle:
+		excludePatterns := []string{"org.apache.maven.**", "org.gradle.**"}
 		runnerOpts := &jazzer.RunnerOptions{
-			TargetClass:      c.opts.fuzzTest,
-			ClassPaths:       buildResult.RuntimeDeps,
-			LibfuzzerOptions: runnerOpts,
+			TargetClass:             c.opts.fuzzTest,
+			ClassPaths:              buildResult.RuntimeDeps,
+			InstrumentationExcludes: excludePatterns,
+			LibfuzzerOptions:        runnerOpts,
 		}
 		runner = jazzer.NewRunner(runnerOpts)
 	}
